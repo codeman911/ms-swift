@@ -51,23 +51,30 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     logger.info(f"Loaded {len(data)} samples from {path}")
     
     def normalize_content(content, role):
-        """Normalize content based on role - system messages stay as strings."""
-        if role == "system":
-            # System messages should always be strings for MS-SWIFT template
-            if isinstance(content, str):
-                return content
-            elif isinstance(content, list) and len(content) == 1 and content[0].get("type") == "text":
-                return content[0].get("text", "")
-            else:
-                return str(content)
+        """Normalize ALL content to consistent list format for Arrow schema."""
+        # Convert everything to list format to avoid Arrow type mixing
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            # Already in list format, ensure each item has proper structure
+            normalized_list = []
+            for item in content:
+                if isinstance(item, dict):
+                    # Ensure all required keys exist with defaults
+                    normalized_item = {
+                        "type": item.get("type", "text"),
+                        "text": item.get("text", ""),
+                        "audio_url": item.get("audio_url", None),
+                        "raw_audio": item.get("raw_audio", ""),
+                        "duration": item.get("duration", None),
+                        "offset": item.get("offset", None)
+                    }
+                    normalized_list.append(normalized_item)
+                else:
+                    normalized_list.append({"type": "text", "text": str(item), "audio_url": None, "raw_audio": "", "duration": None, "offset": None})
+            return normalized_list
         else:
-            # User/assistant messages can have mixed content (text + audio)
-            if isinstance(content, str):
-                return content  # Keep as string if it's already a string
-            elif isinstance(content, list):
-                return content  # Keep as list for multimodal content
-            else:
-                return str(content)
+            return [{"type": "text", "text": str(content), "audio_url": None, "raw_audio": "", "duration": None, "offset": None}]
     
     # Normalize messages to ensure consistent content structure
     normalized_messages = []
