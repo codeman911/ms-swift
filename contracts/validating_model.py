@@ -204,12 +204,24 @@ class ValidatingHiggsAudioModel(HiggsAudioModel):
         if len(codebooks) > 1 and len(set(codebooks)) != 1:
             raise ValueError(f"[{ctx}] Inconsistent num_codebooks across audio tensors: {codebooks}")
 
-        # Move start indices to the same device as input_ids to satisfy downstream merge validation
+        # Move all audio tensors to the same device as input_ids to prevent multi-GPU device mismatch
         target_device = input_ids.device
         if audio_in_ids_start is not None and audio_in_ids_start.device != target_device:
             audio_in_ids_start = audio_in_ids_start.to(target_device)
         if audio_out_ids_start is not None and audio_out_ids_start.device != target_device:
             audio_out_ids_start = audio_out_ids_start.to(target_device)
+        if audio_out_ids_start_group_loc is not None and audio_out_ids_start_group_loc.device != target_device:
+            audio_out_ids_start_group_loc = audio_out_ids_start_group_loc.to(target_device)
+        if audio_features is not None and audio_features.device != target_device:
+            audio_features = audio_features.to(target_device)
+        if audio_feature_attention_mask is not None and audio_feature_attention_mask.device != target_device:
+            audio_feature_attention_mask = audio_feature_attention_mask.to(target_device)
+        if audio_in_ids is not None and audio_in_ids.device != target_device:
+            audio_in_ids = audio_in_ids.to(target_device)
+        if audio_out_ids is not None and audio_out_ids.device != target_device:
+            audio_out_ids = audio_out_ids.to(target_device)
+        if label_audio_ids is not None and label_audio_ids.device != target_device:
+            label_audio_ids = label_audio_ids.to(target_device)
 
         # Debug: Log parameters before delegation
         debug_logger.info(f"[{ctx}] Delegating to HiggsAudioModel.forward()")

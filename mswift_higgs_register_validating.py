@@ -277,6 +277,7 @@ register_model(ModelMeta(
     ],
     template="higgs-chatml-validating",
     get_function=get_validating_higgs_audio_model,
+    data_collator=get_validating_higgs_data_collator,  # Register the audio-aware collator
     model_arch="higgs-audio",
 ))
 
