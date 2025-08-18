@@ -4,9 +4,14 @@ import torch
 from typing import Optional
 import sys
 import os
+import logging
 
 # Add higgs-audio to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'higgs-audio'))
+
+# Setup debug logger
+debug_logger = logging.getLogger("ValidatingHiggsAudio")
+debug_logger.setLevel(logging.INFO)
 
 from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
 
@@ -57,13 +62,25 @@ class ValidatingHiggsAudioModel(HiggsAudioModel):
     ):
         ctx = "ValidatingHiggsAudioModel.forward"
 
+        # Debug: Log input parameters
+        debug_logger.info(f"[{ctx}] Forward pass started")
+        debug_logger.info(f"[{ctx}] input_ids shape: {input_ids.shape if input_ids is not None else None}")
+        debug_logger.info(f"[{ctx}] attention_mask shape: {attention_mask.shape if attention_mask is not None else None}")
+        debug_logger.info(f"[{ctx}] kwargs keys: {list(kwargs.keys())}")
+
         # MS-SWIFT/PEFT compatibility: Map 'labels' to HiggsAudio parameter names
         if 'labels' in kwargs:
             labels = kwargs.pop('labels')
+            debug_logger.info(f"[{ctx}] Found 'labels' in kwargs, shape: {labels.shape if labels is not None else None}")
             if labels is not None and label_ids is None:
                 # For HiggsAudio, MS-SWIFT's 'labels' maps to 'label_ids' (text labels)
                 # label_audio_ids should be handled separately by the data collator
                 label_ids = labels
+                debug_logger.info(f"[{ctx}] Mapped 'labels' to 'label_ids', shape: {label_ids.shape}")
+        
+        # Debug: Log label parameters
+        debug_logger.info(f"[{ctx}] label_ids shape: {label_ids.shape if label_ids is not None else None}")
+        debug_logger.info(f"[{ctx}] label_audio_ids shape: {label_audio_ids.shape if label_audio_ids is not None else None}")
 
         # Core text inputs
         assert_is_long(ctx, input_ids, "input_ids")
@@ -100,6 +117,15 @@ class ValidatingHiggsAudioModel(HiggsAudioModel):
         # Audio token ids and starts
         num_in_ph = count_token_occurrences(input_ids, getattr(self, "audio_in_token_idx"))
         num_out_ph = count_token_occurrences(input_ids, getattr(self, "audio_out_token_idx"))
+        
+        # Debug: Log audio placeholder counts and feature shapes
+        debug_logger.info(f"[{ctx}] Audio placeholders - <|AUDIO|>: {num_in_ph}, <|AUDIO_OUT|>: {num_out_ph}")
+        debug_logger.info(f"[{ctx}] audio_features shape: {audio_features.shape if audio_features is not None else None}")
+        debug_logger.info(f"[{ctx}] audio_feature_attention_mask shape: {audio_feature_attention_mask.shape if audio_feature_attention_mask is not None else None}")
+        debug_logger.info(f"[{ctx}] audio_in_ids shape: {audio_in_ids.shape if audio_in_ids is not None else None}")
+        debug_logger.info(f"[{ctx}] audio_out_ids shape: {audio_out_ids.shape if audio_out_ids is not None else None}")
+        debug_logger.info(f"[{ctx}] audio_in_ids_start shape: {audio_in_ids_start.shape if audio_in_ids_start is not None else None}")
+        debug_logger.info(f"[{ctx}] audio_out_ids_start shape: {audio_out_ids_start.shape if audio_out_ids_start is not None else None}")
 
         # audio_in (only required if encode_audio_in_tokens and placeholders exist)
         if getattr(self.config, "encode_audio_in_tokens", False) and num_in_ph > 0:
@@ -185,6 +211,13 @@ class ValidatingHiggsAudioModel(HiggsAudioModel):
         if audio_out_ids_start is not None and audio_out_ids_start.device != target_device:
             audio_out_ids_start = audio_out_ids_start.to(target_device)
 
+        # Debug: Log parameters before delegation
+        debug_logger.info(f"[{ctx}] Delegating to HiggsAudioModel.forward()")
+        debug_logger.info(f"[{ctx}] Final parameter summary:")
+        debug_logger.info(f"[{ctx}]   label_ids: {label_ids.shape if label_ids is not None else None}")
+        debug_logger.info(f"[{ctx}]   label_audio_ids: {label_audio_ids.shape if label_audio_ids is not None else None}")
+        debug_logger.info(f"[{ctx}]   return_dict: {return_dict}")
+
         # Delegate to base model
         ret = super().forward(
             input_ids=input_ids,
@@ -210,6 +243,43 @@ class ValidatingHiggsAudioModel(HiggsAudioModel):
             past_key_values_buckets=past_key_values_buckets,
             reward=reward,
         )
+
+        # Debug: Log output and loss information
+        debug_logger.info(f"[{ctx}] Forward pass completed")
+        debug_logger.info(f"[{ctx}] Return type: {type(ret)}")
+        
+        if hasattr(ret, 'loss') and ret.loss is not None:
+            debug_logger.info(f"[{ctx}] outputs.loss: {ret.loss.item():.6f}")
+        else:
+            debug_logger.info(f"[{ctx}] outputs.loss: None")
+            
+        if hasattr(ret, 'llm_loss') and ret.llm_loss is not None:
+            debug_logger.info(f"[{ctx}] outputs.llm_loss: {ret.llm_loss.item():.6f}")
+        else:
+            debug_logger.info(f"[{ctx}] outputs.llm_loss: None")
+            
+        if hasattr(ret, 'audio_loss') and ret.audio_loss is not None:
+            debug_logger.info(f"[{ctx}] outputs.audio_loss: {ret.audio_loss.item():.6f}")
+        else:
+            debug_logger.info(f"[{ctx}] outputs.audio_loss: None")
+            
+        if hasattr(ret, 'logits') and ret.logits is not None:
+            debug_logger.info(f"[{ctx}] outputs.logits shape: {ret.logits.shape}")
+        else:
+            debug_logger.info(f"[{ctx}] outputs.logits: None")
+            
+        if hasattr(ret, 'audio_logits') and ret.audio_logits is not None:
+            debug_logger.info(f"[{ctx}] outputs.audio_logits shape: {ret.audio_logits.shape}")
+        else:
+            debug_logger.info(f"[{ctx}] outputs.audio_logits: None")
+            
+        # Debug: Log all available attributes on return object
+        if hasattr(ret, '__dict__'):
+            debug_logger.info(f"[{ctx}] Available output attributes: {list(ret.__dict__.keys())}")
+        elif hasattr(ret, '_fields'):
+            debug_logger.info(f"[{ctx}] Available output fields: {ret._fields}")
+        else:
+            debug_logger.info(f"[{ctx}] Return object attributes: {dir(ret)}")
 
         # Light post-checks
         if hasattr(ret, "attention_mask") and ret.attention_mask is not None:
