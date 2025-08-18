@@ -113,31 +113,9 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
             "start_index": sample.get("start_index", 0),
         })
     
-    # Define explicit Features schema to force consistent types
-    from datasets import Features, Value, Sequence
-    
-    # Define the schema for content items
-    content_item_schema = {
-        "type": Value("string"),
-        "text": Value("string"), 
-        "audio_url": Value("string"),
-        "raw_audio": Value("string"),
-        "duration": Value("float64"),
-        "offset": Value("float64")
-    }
-    
-    # Define the overall schema
-    features = Features({
-        "messages": Sequence({
-            "role": Value("string"),
-            "content": Sequence(content_item_schema)
-        }),
-        "speaker": Value("string"),
-        "start_index": Value("int64")
-    })
-    
-    # Create dataset with explicit schema
-    hf_dataset = HFDataset.from_list(dataset_list, features=features)
+    # Create dataset without explicit schema to allow mixed content types
+    # System messages = strings, user/assistant messages = lists
+    hf_dataset = HFDataset.from_list(dataset_list)
     
     logger.info("ValidatingHiggsChatMLDataset created with explicit Arrow schema.")
     return hf_dataset
