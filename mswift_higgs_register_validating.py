@@ -50,18 +50,41 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     
     logger.info(f"Loaded {len(data)} samples from {path}")
     
-    # Dataset already has 'messages' field in correct MS-SWIFT format
-    # Just pass it through directly
-    dataset_dict = {
-        "messages": [sample.get("messages", []) for sample in data],
-        "speaker": [sample.get("speaker", None) for sample in data],
-        "start_index": [sample.get("start_index", 0) for sample in data],
-    }
+    def normalize_content(content):
+        """Normalize content to consistent format for Arrow schema."""
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            return content
+        else:
+            return [{"type": "text", "text": str(content)}]
     
-    # Create HuggingFace Dataset
-    hf_dataset = HFDataset.from_dict(dataset_dict)
+    # Normalize messages to ensure consistent content structure
+    normalized_messages = []
+    for sample in data:
+        messages = sample.get("messages", [])
+        normalized_sample_messages = []
+        for msg in messages:
+            normalized_msg = {
+                "role": msg.get("role", "user"),
+                "content": normalize_content(msg.get("content", ""))
+            }
+            normalized_sample_messages.append(normalized_msg)
+        normalized_messages.append(normalized_sample_messages)
     
-    logger.info("ValidatingHiggsChatMLDataset created with messages field preserved.")
+    # Create dataset list for from_list method (avoids Arrow type mixing)
+    dataset_list = []
+    for i, sample in enumerate(data):
+        dataset_list.append({
+            "messages": normalized_messages[i],
+            "speaker": sample.get("speaker", None),
+            "start_index": sample.get("start_index", 0),
+        })
+    
+    # Use from_list instead of from_dict to handle complex nested structures
+    hf_dataset = HFDataset.from_list(dataset_list)
+    
+    logger.info("ValidatingHiggsChatMLDataset created with normalized messages structure.")
     return hf_dataset
 
 # Register the validating dataset
