@@ -14,7 +14,6 @@ swift sft \
     --model ../train-higgs-audio/model_file/ \
     --template higgs-chatml-validating \
     --dataset higgs-chatml-validating \
-    --val_dataset_sample 0.1 \
     --train_type lora \
     --lora_rank 8 \
     --lora_alpha 32 \
