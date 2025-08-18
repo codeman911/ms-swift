@@ -53,8 +53,17 @@ class ValidatingHiggsAudioModel(HiggsAudioModel):
         cache_audio_discrete_codes_mask: Optional[torch.LongTensor] = None,
         past_key_values_buckets: Optional[object] = None,
         reward: Optional[torch.FloatTensor] = None,
+        **kwargs
     ):
         ctx = "ValidatingHiggsAudioModel.forward"
+
+        # MS-SWIFT/PEFT compatibility: Map 'labels' to HiggsAudio parameter names
+        if 'labels' in kwargs:
+            labels = kwargs.pop('labels')
+            if labels is not None and label_ids is None:
+                # For HiggsAudio, MS-SWIFT's 'labels' maps to 'label_ids' (text labels)
+                # label_audio_ids should be handled separately by the data collator
+                label_ids = labels
 
         # Core text inputs
         assert_is_long(ctx, input_ids, "input_ids")
