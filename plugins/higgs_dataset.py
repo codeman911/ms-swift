@@ -113,14 +113,14 @@ def load_higgs_chatml_dataset(dataset_syntax, dataset_meta, **kwargs) -> Dataset
             if tgt_audio_path and not os.path.isabs(tgt_audio_path):
                 tgt_audio_path = os.path.join(base_dir, tgt_audio_path)
             
-            # Create normalized sample
+            # Create normalized sample - handle missing lang field properly
             normalized_sample = {
                 "id": sample.get("id", f"sample_{i:08d}"),
                 "messages": messages,
                 "ref_audio_path": ref_audio_path or "",
                 "tgt_audio_path": tgt_audio_path or "",  
-                "lang": sample.get("lang", "en"),
-                "speaker": sample.get("speaker", ""),
+                "lang": sample.get("lang", "en") if "lang" in sample else "en",
+                "speaker": sample.get("speaker", "") if "speaker" in sample else "",
             }
             
             # Validate that we have required fields

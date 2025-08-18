@@ -275,10 +275,41 @@ class HiggsChatMLTemplate(Template):
     # --------- required by SWIFT ----------
     def _encode(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Keep rows untouched; return the raw dict.
-        SWIFT will pass batches of these dicts to _data_collator.
+        MS-SWIFT expects encoded output with input_ids, attention_mask, etc.
+        For our use case, we'll do minimal text tokenization here and let the 
+        data collator handle the full multimodal processing.
         """
-        return item
+        # Initialize text tokenizer if needed
+        self._init_text_tokenizer()
+        
+        # Extract messages and create a simple text representation
+        messages = item.get('messages', [])
+        text_content = ""
+        
+        for msg in messages:
+            role = msg.get('role', '')
+            content = msg.get('content', '')
+            text_content += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+        
+        # Tokenize the text content
+        encoded = self._text_tok(
+            text_content,
+            truncation=True,
+            max_length=self.max_length or 2048,
+            padding=False,
+            return_tensors=None
+        )
+        
+        # Add the original item data for the collator to use
+        result = {
+            'input_ids': encoded['input_ids'],
+            'attention_mask': encoded.get('attention_mask', [1] * len(encoded['input_ids'])),
+            'labels': encoded['input_ids'].copy(),  # Will be properly shifted in collator
+            # Preserve original data for collator
+            '_original_item': item
+        }
+        
+        return result
 
     def _post_encoding(self, encoded_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         # No-op; we handle everything in collator.
