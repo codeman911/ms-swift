@@ -2,19 +2,25 @@
 # Purpose: register a custom template that hands raw dataset rows to your Higgs collator
 # so you can tokenize on-the-fly. Optionally register a model_type.
 
+import torch
+import torch.nn as nn
+from transformers import AutoConfig, AutoModelForCausalLM
+from transformers.models.auto import CONFIG_MAPPING, MODEL_FOR_CAUSAL_LM_MAPPING
+import logging
 import sys
 import os
-from pathlib import Path
-from typing import Any, Dict, List
-import functools
-import torch
+import importlib
 
-# Add higgs-audio to Python path
-current_dir = Path(__file__).parent.parent.absolute()
-higgs_audio_path = current_dir / "higgs-audio"
-if higgs_audio_path.exists():
-    sys.path.insert(0, str(higgs_audio_path))
-    print(f"[INFO] Added higgs-audio to Python path: {higgs_audio_path}")
+# Setup logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Add the higgs-audio directory to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'higgs-audio'))
+
+# Import the HiggsAudioConfig and HiggsAudioModel from the local higgs-audio directory
+from boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
+from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
 
 # MS-SWIFT APIs
 from swift.llm import register_template, TemplateMeta, Template
@@ -25,29 +31,119 @@ try:
     from boson_multimodal.audio_processing.higgs_audio_tokenizer import HiggsAudioTokenizer
     from boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
     from boson_multimodal.constants import AUDIO_IN_TOKEN, AUDIO_OUT_TOKEN
-    from boson_multimodal.model.higgs_audio import HiggsAudioConfig, HiggsAudioModel
     print("[INFO] Successfully imported Higgs Audio components")
     
     # Register HiggsAudio model with transformers auto classes
     try:
         from transformers import AutoConfig, AutoModelForCausalLM
-        AutoConfig.register("higgs_audio", HiggsAudioConfig)
-        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel)
+        
+        # ==== CRITICAL GRADIENT CHECKPOINTING FIX ====
+        # Patch ALL possible HiggsAudioModel class references to ensure gradient checkpointing works
+
+        def patch_higgs_audio_model():
+            """Comprehensively patch HiggsAudioModel class with required methods."""
+            
+            def get_input_embeddings(self) -> nn.Module:
+                """Return the text embedding layer for gradient checkpointing."""
+                return self.embed_tokens
+            
+            def set_input_embeddings(self, value: nn.Module):
+                """Set the text embedding layer for gradient checkpointing."""
+                self.embed_tokens = value
+            
+            def enable_input_require_grads(self):
+                """Enable gradients for input embeddings (required for gradient checkpointing)."""
+                def make_inputs_require_grad(module, input, output):
+                    if output is not None:
+                        for out in output if isinstance(output, tuple) else [output]:
+                            if torch.is_tensor(out) and out.dtype == torch.float:
+                                out.requires_grad_(True)
+                
+                # Register forward hook on embeddings
+                if hasattr(self, '_input_require_grads_hook'):
+                    self._input_require_grads_hook.remove()
+                
+                embeddings = self.get_input_embeddings()
+                if embeddings is not None:
+                    self._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
+            
+            def disable_input_require_grads(self):
+                """Disable gradients for input embeddings."""
+                if hasattr(self, '_input_require_grads_hook'):
+                    self._input_require_grads_hook.remove()
+                    delattr(self, '_input_require_grads_hook')
+            
+            # Patch the imported HiggsAudioModel class
+            if not hasattr(HiggsAudioModel, 'get_input_embeddings'):
+                logger.info("Patching HiggsAudioModel with get_input_embeddings method")
+                HiggsAudioModel.get_input_embeddings = get_input_embeddings
+            
+            if not hasattr(HiggsAudioModel, 'set_input_embeddings'):
+                logger.info("Patching HiggsAudioModel with set_input_embeddings method")
+                HiggsAudioModel.set_input_embeddings = set_input_embeddings
+            
+            if not hasattr(HiggsAudioModel, 'enable_input_require_grads'):
+                logger.info("Patching HiggsAudioModel with enable_input_require_grads method")
+                HiggsAudioModel.enable_input_require_grads = enable_input_require_grads
+            
+            if not hasattr(HiggsAudioModel, 'disable_input_require_grads'):
+                logger.info("Patching HiggsAudioModel with disable_input_require_grads method")
+                HiggsAudioModel.disable_input_require_grads = disable_input_require_grads
+            
+            # Also patch in sys.modules if the module is already imported
+            for module_name in list(sys.modules.keys()):
+                if 'higgs_audio' in module_name and 'modeling' in module_name:
+                    module = sys.modules[module_name]
+                    if hasattr(module, 'HiggsAudioModel'):
+                        model_class = getattr(module, 'HiggsAudioModel')
+                        if not hasattr(model_class, 'get_input_embeddings'):
+                            logger.info(f"Patching {module_name}.HiggsAudioModel")
+                            model_class.get_input_embeddings = get_input_embeddings
+                            model_class.set_input_embeddings = set_input_embeddings
+                            model_class.enable_input_require_grads = enable_input_require_grads
+                            model_class.disable_input_require_grads = disable_input_require_grads
+            
+            logger.info("✓ HiggsAudioModel patching complete for gradient checkpointing")
+
+        # Apply the patches immediately
+        patch_higgs_audio_model()
+        
+        # Register with transformers
+        AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
+        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
         
         # Force override for the specific model we're using
-        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
-        from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
-        CONFIG_MAPPING.update([("higgs_audio", HiggsAudioConfig)])
-        MODEL_FOR_CAUSAL_LM_MAPPING.update([(HiggsAudioConfig, HiggsAudioModel)])
+        CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
+        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
         
-        print("[INFO] Successfully registered HiggsAudio model with transformers auto classes")
-        print(f"[INFO] HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
+        logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
+        logger.info(f"✓ HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
+        logger.info(f"✓ HiggsAudioModel has set_input_embeddings: {hasattr(HiggsAudioModel, 'set_input_embeddings')}")
+        logger.info(f"✓ HiggsAudioModel has enable_input_require_grads: {hasattr(HiggsAudioModel, 'enable_input_require_grads')}")
         
-        # Verify the model has the required methods
-        if hasattr(HiggsAudioModel, 'get_input_embeddings'):
-            print("[INFO] ✓ HiggsAudioModel has get_input_embeddings method")
-        else:
-            print("[ERROR] ✗ HiggsAudioModel missing get_input_embeddings method")
+        # Hook into model loading to patch any dynamically loaded models
+        original_from_pretrained = AutoModelForCausalLM.from_pretrained
+        
+        def patched_from_pretrained(pretrained_model_name_or_path, *args, **kwargs):
+            """Wrapper to ensure HiggsAudio models have required methods."""
+            model = original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+            
+            # If it's a HiggsAudio model, ensure it has the required methods
+            if model.__class__.__name__ == 'HiggsAudioModel' or 'higgs' in pretrained_model_name_or_path.lower():
+                logger.info(f"Post-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
+                patch_higgs_audio_model()
+                
+                # Also patch the instance directly if needed
+                if not hasattr(model, 'get_input_embeddings'):
+                    logger.info("Patching model instance with embedding methods")
+                    model.get_input_embeddings = lambda: model.embed_tokens
+                    model.set_input_embeddings = lambda v: setattr(model, 'embed_tokens', v)
+            
+            return model
+        
+        # Replace the from_pretrained method
+        AutoModelForCausalLM.from_pretrained = patched_from_pretrained
+        logger.info("✓ Hooked into AutoModelForCausalLM.from_pretrained for dynamic patching")
             
     except Exception as e:
         print(f"[WARNING] Failed to register HiggsAudio model: {e}")
