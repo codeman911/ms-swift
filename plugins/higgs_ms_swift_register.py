@@ -127,11 +127,18 @@ try:
         
         def patched_from_pretrained(pretrained_model_name_or_path, *args, **kwargs):
             """Wrapper to ensure HiggsAudio models have required methods."""
+            # CRITICAL: Patch HiggsAudioModel BEFORE loading
+            if 'higgs' in str(pretrained_model_name_or_path).lower():
+                logger.info(f"Pre-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
+                patch_higgs_audio_model()
+            
             model = original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
             
-            # If it's a HiggsAudio model, ensure it has the required methods
-            if model.__class__.__name__ == 'HiggsAudioModel' or 'higgs' in pretrained_model_name_or_path.lower():
-                logger.info(f"Post-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
+            # Double-check and patch the loaded instance if needed
+            if model.__class__.__name__ == 'HiggsAudioModel' or 'higgs' in str(pretrained_model_name_or_path).lower():
+                logger.info(f"Post-load verification for HiggsAudioModel")
+                
+                # Patch the class again to be sure
                 patch_higgs_audio_model()
                 
                 # Also patch the instance directly if needed
@@ -139,6 +146,23 @@ try:
                     logger.info("Patching model instance with embedding methods")
                     model.get_input_embeddings = lambda: model.embed_tokens
                     model.set_input_embeddings = lambda v: setattr(model, 'embed_tokens', v)
+                    
+                    # Add enable_input_require_grads to instance
+                    def instance_enable_input_require_grads():
+                        def make_inputs_require_grad(module, input, output):
+                            if output is not None:
+                                for out in output if isinstance(output, tuple) else [output]:
+                                    if torch.is_tensor(out) and out.dtype == torch.float:
+                                        out.requires_grad_(True)
+                        
+                        if hasattr(model, '_input_require_grads_hook'):
+                            model._input_require_grads_hook.remove()
+                        
+                        embeddings = model.embed_tokens
+                        if embeddings is not None:
+                            model._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
+                    
+                    model.enable_input_require_grads = instance_enable_input_require_grads
             
             return model
         
@@ -163,14 +187,36 @@ try:
                     base = self.base_model
                     if hasattr(base, 'model'):
                         base = base.model
-                    if hasattr(base, 'get_input_embeddings'):
-                        return base.get_input_embeddings()
-                    elif hasattr(base, 'embed_tokens'):
+                    
+                    # CRITICAL: Check for embed_tokens FIRST before trying get_input_embeddings
+                    # This avoids NotImplementedError from HiggsAudioModel
+                    if hasattr(base, 'embed_tokens'):
                         return base.embed_tokens
+                    
+                    # Try to find embed_tokens in model attributes
+                    for attr_name in ['model', 'language_model', 'transformer']:
+                        if hasattr(base, attr_name):
+                            sub_model = getattr(base, attr_name)
+                            if hasattr(sub_model, 'embed_tokens'):
+                                return sub_model.embed_tokens
+                    
+                    # Only try get_input_embeddings as last resort
+                    if hasattr(base, 'get_input_embeddings'):
+                        try:
+                            result = base.get_input_embeddings()
+                            if result is not None:
+                                return result
+                        except NotImplementedError:
+                            pass
+                
                 # Fallback to original if it exists
                 if orig_peft_get_input:
-                    return orig_peft_get_input(self)
-                raise NotImplementedError("Could not find input embeddings in PEFT model")
+                    try:
+                        return orig_peft_get_input(self)
+                    except:
+                        pass
+                
+                raise NotImplementedError(f"Could not find input embeddings in PEFT model. Model type: {type(self)}, Base model type: {type(self.base_model) if hasattr(self, 'base_model') else 'No base_model'}")
             
             def peft_set_input_embeddings(self, value: nn.Module):
                 """Set input embeddings in the base model."""
@@ -179,15 +225,33 @@ try:
                     base = self.base_model
                     if hasattr(base, 'model'):
                         base = base.model
-                    if hasattr(base, 'set_input_embeddings'):
-                        base.set_input_embeddings(value)
-                    elif hasattr(base, 'embed_tokens'):
+                    
+                    # Try set_input_embeddings method first
+                    if hasattr(base, 'set_input_embeddings') and not isinstance(getattr(base, 'set_input_embeddings'), type(lambda: None)):
+                        try:
+                            base.set_input_embeddings(value)
+                            return
+                        except NotImplementedError:
+                            pass
+                    
+                    # Fallback to direct assignment
+                    if hasattr(base, 'embed_tokens'):
                         base.embed_tokens = value
-                    return
+                        return
+                    
+                    # Try to find embed_tokens in model attributes
+                    for attr_name in ['model', 'language_model', 'transformer']:
+                        if hasattr(base, attr_name):
+                            sub_model = getattr(base, attr_name)
+                            if hasattr(sub_model, 'embed_tokens'):
+                                sub_model.embed_tokens = value
+                                return
+                
                 # Fallback to original if it exists
                 if orig_peft_set_input:
                     orig_peft_set_input(self, value)
                     return
+                
                 raise NotImplementedError("Could not set input embeddings in PEFT model")
             
             def peft_enable_input_require_grads(self):
