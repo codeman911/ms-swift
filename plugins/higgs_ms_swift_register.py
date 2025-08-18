@@ -298,8 +298,10 @@ class HiggsChatMLTemplate(Template):
 register_template(
     TemplateMeta(
         template_type="higgs_chatml",
+        prefix=[],  # No prefix needed for ChatML
+        prompt=['<|im_start|>user\n{{QUERY}}<|im_end|>\n<|im_start|>assistant\n'],
+        chat_sep=['<|im_end|>\n'],
         template_cls=HiggsChatMLTemplate,
-        # Let users override via CLI if they pass another tokenizer/model id
         default_system=None
     )
 )
