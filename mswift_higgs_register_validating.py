@@ -122,7 +122,7 @@ def load_validating_higgs_chatml_dataset(path: str, *args, **kwargs):
 # Register the validating dataset
 register_dataset(DatasetMeta(
     dataset_name="higgs-chatml-validating",
-    ms_dataset_id="higgs-chatml-validating",
+    dataset_path="../higgs-audio/lora_training_data_zr/chatml_fixed/train_chatml_samples.json",
     load_function=load_validating_higgs_chatml_dataset,
 ))
 
