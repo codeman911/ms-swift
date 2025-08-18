@@ -613,14 +613,16 @@ class HiggsChatMLTemplate(Template):
             )
         return self._collator
 
-    def _data_collator(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+    def _data_collator(self, features: List[Dict[str, Any]], padding_to=None) -> Dict[str, torch.Tensor]:
         """
         SWIFT calls this to collate a batch. We delegate to our collator.
+        Accept padding_to parameter for compatibility with MS-SWIFT base template.
         """
         # Lazily init tokenizers & collator
         self._init_text_tokenizer()
         self._init_audio_tokenizer()
         collator = self._build_collator()
+        # Note: Our custom collator doesn't use padding_to, but we accept it for compatibility
         return collator(features)
 
 
