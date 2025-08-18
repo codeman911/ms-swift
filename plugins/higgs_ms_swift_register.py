@@ -145,6 +145,82 @@ try:
         # Replace the from_pretrained method
         AutoModelForCausalLM.from_pretrained = patched_from_pretrained
         logger.info("✓ Hooked into AutoModelForCausalLM.from_pretrained for dynamic patching")
+        
+        # === CRITICAL: Patch PEFT wrapper classes ===
+        # When using LoRA, the model gets wrapped with PeftModelForCausalLM
+        # We need to ensure the PEFT wrapper delegates embedding methods to base model
+        try:
+            from peft import PeftModel, PeftModelForCausalLM
+            
+            # Store original methods if they exist
+            orig_peft_get_input = getattr(PeftModelForCausalLM, 'get_input_embeddings', None)
+            orig_peft_set_input = getattr(PeftModelForCausalLM, 'set_input_embeddings', None)
+            
+            def peft_get_input_embeddings(self) -> nn.Module:
+                """Get input embeddings from the base model."""
+                # Try base_model first (PEFT structure)
+                if hasattr(self, 'base_model'):
+                    base = self.base_model
+                    if hasattr(base, 'model'):
+                        base = base.model
+                    if hasattr(base, 'get_input_embeddings'):
+                        return base.get_input_embeddings()
+                    elif hasattr(base, 'embed_tokens'):
+                        return base.embed_tokens
+                # Fallback to original if it exists
+                if orig_peft_get_input:
+                    return orig_peft_get_input(self)
+                raise NotImplementedError("Could not find input embeddings in PEFT model")
+            
+            def peft_set_input_embeddings(self, value: nn.Module):
+                """Set input embeddings in the base model."""
+                # Try base_model first (PEFT structure)
+                if hasattr(self, 'base_model'):
+                    base = self.base_model
+                    if hasattr(base, 'model'):
+                        base = base.model
+                    if hasattr(base, 'set_input_embeddings'):
+                        base.set_input_embeddings(value)
+                    elif hasattr(base, 'embed_tokens'):
+                        base.embed_tokens = value
+                    return
+                # Fallback to original if it exists
+                if orig_peft_set_input:
+                    orig_peft_set_input(self, value)
+                    return
+                raise NotImplementedError("Could not set input embeddings in PEFT model")
+            
+            def peft_enable_input_require_grads(self):
+                """Enable input require grads for PEFT model."""
+                def make_inputs_require_grad(module, input, output):
+                    if output is not None:
+                        for out in output if isinstance(output, tuple) else [output]:
+                            if torch.is_tensor(out) and out.dtype == torch.float:
+                                out.requires_grad_(True)
+                
+                if hasattr(self, '_input_require_grads_hook'):
+                    self._input_require_grads_hook.remove()
+                
+                embeddings = self.get_input_embeddings()
+                if embeddings is not None:
+                    self._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
+            
+            # Apply patches to PEFT classes
+            PeftModelForCausalLM.get_input_embeddings = peft_get_input_embeddings
+            PeftModelForCausalLM.set_input_embeddings = peft_set_input_embeddings
+            PeftModelForCausalLM.enable_input_require_grads = peft_enable_input_require_grads
+            
+            # Also patch base PeftModel class
+            PeftModel.get_input_embeddings = peft_get_input_embeddings
+            PeftModel.set_input_embeddings = peft_set_input_embeddings
+            PeftModel.enable_input_require_grads = peft_enable_input_require_grads
+            
+            logger.info("✓ Patched PEFT model classes for gradient checkpointing compatibility")
+            
+        except ImportError:
+            logger.info("PEFT not installed, skipping PEFT model patches")
+        except Exception as e:
+            logger.warning(f"Failed to patch PEFT models: {e}")
             
     except Exception as e:
         print(f"[WARNING] Failed to register HiggsAudio model: {e}")
