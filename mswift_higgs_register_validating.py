@@ -160,7 +160,6 @@ register_template(TemplateMeta(
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
-    data_collator=get_validating_higgs_data_collator,
 ))
 
 # --- 3. Validating Model Registration ---
