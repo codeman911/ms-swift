@@ -104,33 +104,64 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
             return " ".join(text_parts).strip()
         return str(content)
     
-    # Process data for MS-SWIFT standard format
+    # Process data for MS-SWIFT standard format with validation
     normalized_data = []
-    for sample in data:
+    skipped_count = 0
+    
+    for i, sample in enumerate(data):
         messages = sample.get("messages", [])
         
+        # Validate messages structure
+        if not messages or not isinstance(messages, list):
+            logger.warning(f"Sample {i}: Invalid messages structure - skipping")
+            skipped_count += 1
+            continue
+            
         # Create standard MS-SWIFT messages format
         processed_messages = []
-        for msg in messages:
+        valid_sample = True
+        
+        for msg_idx, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                logger.warning(f"Sample {i}, message {msg_idx}: Invalid message format - skipping sample")
+                valid_sample = False
+                break
+                
             role = str(msg.get("role", "user"))
             content = msg.get("content", "")
             
-            # For MS-SWIFT: use extracted text as content, store normalized in separate field
+            # Validate role
+            if not role or role not in ["system", "user", "assistant"]:
+                logger.warning(f"Sample {i}, message {msg_idx}: Invalid role '{role}' - skipping sample")
+                valid_sample = False
+                break
+            
+            # Extract and validate content
             text_content = extract_text_from_content(content)
+            if not text_content.strip():
+                logger.warning(f"Sample {i}, message {msg_idx}: Empty content after extraction - skipping sample")
+                valid_sample = False
+                break
+            
             normalized_content = normalize_content(content)
             
             processed_msg = {
                 "role": role,
-                "content": text_content,  # MS-SWIFT expects text content here
+                "content": text_content.strip(),  # MS-SWIFT expects text content here
                 "normalized_content": normalized_content  # Store multimodal data separately
             }
             processed_messages.append(processed_msg)
         
-        normalized_data.append({
-            "messages": processed_messages,
-            "speaker": str(sample.get("speaker", "")),
-            "start_index": int(sample.get("start_index", 0))
-        })
+        if valid_sample and processed_messages:
+            normalized_data.append({
+                "messages": processed_messages,
+                "speaker": str(sample.get("speaker", "")),
+                "start_index": int(sample.get("start_index", 0))
+            })
+        else:
+            skipped_count += 1
+    
+    logger.info(f"Processed {len(normalized_data)} valid samples, skipped {skipped_count} invalid samples")
     
     # Define Features schema for MS-SWIFT standard format
     features = Features({
