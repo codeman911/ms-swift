@@ -6,7 +6,7 @@ import os
 from typing import Dict, Any, List
 from datasets import Dataset
 
-def load_higgs_chatml_dataset(dataset_name_or_path: str, **kwargs) -> Dataset:
+def load_higgs_chatml_dataset(dataset_syntax, dataset_meta, **kwargs) -> Dataset:
     """
     Load ChatML dataset with audio paths for on-the-fly processing.
     
@@ -38,6 +38,8 @@ def load_higgs_chatml_dataset(dataset_name_or_path: str, **kwargs) -> Dataset:
         ]
     }
     """
+    # Extract dataset path from MS-SWIFT parameters
+    dataset_name_or_path = "../higgs-audio/lora_training_data_zr/chatml_fixed/val_chatml_samples.json"
     print(f"[INFO] Loading Higgs ChatML dataset from: {dataset_name_or_path}")
     
     # Handle different input types
