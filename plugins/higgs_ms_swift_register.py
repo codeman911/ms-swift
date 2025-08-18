@@ -109,13 +109,25 @@ try:
         # Apply the patches immediately
         patch_higgs_audio_model()
         
-        # Register with transformers
+        # Create wrapper class to handle labels -> label_ids mapping
+        class HiggsAudioModelWrapper(HiggsAudioModel):
+            """Wrapper to map 'labels' to 'label_ids' for MS-SWIFT compatibility."""
+            
+            def forward(self, labels=None, **kwargs):
+                # Map labels to label_ids if present
+                if labels is not None and 'label_ids' not in kwargs:
+                    kwargs['label_ids'] = labels
+                
+                # Call parent forward
+                return super().forward(**kwargs)
+        
+        # Register with transformers using the wrapper
         AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
-        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
+        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModelWrapper, exist_ok=True)
         
         # Force override for the specific model we're using
         CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
-        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
+        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModelWrapper
         
         logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
         logger.info(f"✓ HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
@@ -131,6 +143,8 @@ try:
             if 'higgs' in str(pretrained_model_name_or_path).lower():
                 logger.info(f"Pre-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
                 patch_higgs_audio_model()
+                # Force use wrapper class
+                kwargs['_target_class'] = HiggsAudioModelWrapper
             
             model = original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
             
