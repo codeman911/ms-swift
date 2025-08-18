@@ -246,7 +246,6 @@ register_model(ModelMeta(
     template="higgs-chatml-validating",
     get_function=get_validating_higgs_audio_model,
     model_arch="higgs-audio",
-    model_source="huggingface",
 ))
 
 logger.info("Validating Higgs Audio registration completed successfully.")
