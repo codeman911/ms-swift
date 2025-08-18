@@ -3,153 +3,69 @@
 # Assumes your model forward returns both text and audio logits OR a single dict with these keys.
 
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
+from torch.nn import functional as F
+from typing import Dict, Any
 
-def higgs_text_audio_loss(outputs, labels, loss_scale=None, num_items_in_batch=None) -> torch.Tensor:
+def higgs_text_audio_loss(outputs: Dict[str, torch.Tensor], labels: Dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
     """
-    Compute joint text + audio cross-entropy loss.
+    Compute joint text and audio loss for HiggsAudio model.
     
     Expected inputs:
-      labels["text_labels"]:    [B, Ttxt] - text token labels
-      labels["audio_labels"]:   [B, C=8, Taud] - audio RVQ code labels
-      
-    Expected model outputs:
-      outputs["text_logits"]:   [B, Ttxt, Vtxt] OR outputs["logits"]
-      outputs["audio_logits"]:  [B, C=8, Taud, Vaud] OR outputs["audio"]["logits"]
-      
-    The collator should have already:
-      - Applied teacher forcing shift for audio decoder inputs
-      - Set labels[:, :, 0] = -100 for audio (ONLY first step masked)
-      - NO EOS masking anywhere
+    - outputs['text_logits'] or outputs['logits']: [B, T_text, V_text] 
+    - outputs['audio_logits']: [B, 8, T_audio, V_audio]
+    - labels['text_labels']: [B, T_text] with -100 for masked positions
+    - labels['audio_labels']: [B, 8, T_audio] with -100 for masked positions
+    
+    Returns:
+        Combined loss tensor (text_ce + audio_ce)
     """
-    device = next(iter(outputs.values())).device if isinstance(outputs, dict) else outputs.device
+    device = next(iter(outputs.values())).device
+    total_loss = torch.tensor(0.0, device=device, requires_grad=True)
     
-    # ---- Fetch logits (be permissive with different key formats) ----
-    text_logits = None
-    audio_logits = None
+    # === Text Loss (Causal Language Modeling) ===
+    text_logits = outputs.get('text_logits') or outputs.get('logits')
+    text_labels = labels.get('text_labels')
     
-    if hasattr(outputs, 'logits'):
-        text_logits = outputs.logits
-    elif isinstance(outputs, dict):
-        text_logits = outputs.get("text_logits", outputs.get("logits", None))
-        audio_logits = outputs.get("audio_logits", None)
-        
-        # Try nested audio structure
-        if audio_logits is None and "audio" in outputs:
-            audio_dict = outputs["audio"]
-            if isinstance(audio_dict, dict):
-                audio_logits = audio_dict.get("logits", None)
-            elif hasattr(audio_dict, 'logits'):
-                audio_logits = audio_dict.logits
-    
-    # Fallback: try as attributes
-    if text_logits is None and hasattr(outputs, 'text_logits'):
-        text_logits = outputs.text_logits
-    if audio_logits is None and hasattr(outputs, 'audio_logits'):
-        audio_logits = outputs.audio_logits
-    
-    # ---- Validate we have the required tensors ----
-    if text_logits is None:
-        print(f"[ERROR] Missing text logits in model outputs. Available keys: {list(outputs.keys()) if isinstance(outputs, dict) else 'Not a dict'}")
-        # Return a dummy loss to prevent training crash
-        return torch.tensor(0.0, device=device, requires_grad=True)
-    
-    if audio_logits is None:
-        print(f"[WARNING] Missing audio logits in model outputs. Using text-only loss.")
-        # Fall back to text-only loss
-        audio_loss = torch.tensor(0.0, device=device)
-    
-    # ---- Extract labels ----
-    text_labels = labels.get("text_labels", labels.get("labels", None))
-    audio_labels = labels.get("audio_labels", None)
-    
-    if text_labels is None:
-        print(f"[ERROR] Missing text_labels in labels. Available keys: {list(labels.keys())}")
-        return torch.tensor(0.0, device=device, requires_grad=True)
-    
-    # Move to correct device
-    text_labels = text_labels.to(device)
-    if audio_labels is not None:
-        audio_labels = audio_labels.to(device)
-    
-    # ---- Compute Text Cross-Entropy Loss ----
-    Vtxt = text_logits.size(-1)
-    text_loss = F.cross_entropy(
-        text_logits.reshape(-1, Vtxt),
-        text_labels.reshape(-1),
-        ignore_index=-100,
-        reduction='mean'
-    )
-    
-    # ---- Compute Audio Cross-Entropy Loss ----
-    if audio_logits is not None and audio_labels is not None:
-        # audio_logits: [B, C=8, Taud, Vaud]
-        # audio_labels: [B, C=8, Taud]
-        Vaud = audio_logits.size(-1)
-        audio_loss = F.cross_entropy(
-            audio_logits.reshape(-1, Vaud),
-            audio_labels.reshape(-1),
+    if text_logits is not None and text_labels is not None:
+        # text_logits: [B, T, V], text_labels: [B, T]
+        # Labels are already shifted in the collator
+        text_loss = F.cross_entropy(
+            text_logits.view(-1, text_logits.size(-1)),
+            text_labels.view(-1),
             ignore_index=-100,
             reduction='mean'
         )
-    else:
-        audio_loss = torch.tensor(0.0, device=device)
+        total_loss = total_loss + text_loss
     
-    # ---- Combine losses ----
-    total_loss = text_loss + audio_loss
+    # === Audio Loss (Multi-codebook RVQ) ===
+    audio_logits = outputs.get('audio_logits')
+    audio_labels = labels.get('audio_labels')
     
-    # ---- Store individual losses for logging ----
-    if isinstance(outputs, dict):
-        outputs["text_ce"] = text_loss.detach()
-        outputs["audio_ce"] = audio_loss.detach()
-        outputs["total_loss"] = total_loss.detach()
-    
-    # ---- Debug logging ----
-    if torch.rand(1).item() < 0.01:  # Log ~1% of batches
-        print(f"[DEBUG LOSS] Text: {text_loss.item():.4f}, Audio: {audio_loss.item():.4f}, Total: {total_loss.item():.4f}")
-        print(f"[DEBUG SHAPES] Text logits: {text_logits.shape}, Audio logits: {audio_logits.shape if audio_logits is not None else 'None'}")
-        print(f"[DEBUG LABELS] Text labels: {text_labels.shape}, Audio labels: {audio_labels.shape if audio_labels is not None else 'None'}")
+    if audio_logits is not None and audio_labels is not None:
+        # audio_logits: [B, 8, T, V], audio_labels: [B, 8, T]
+        B, num_codebooks, T, vocab_size = audio_logits.shape
+        
+        # Flatten for cross entropy computation
+        audio_logits_flat = audio_logits.view(-1, vocab_size)  # [B*8*T, V]
+        audio_labels_flat = audio_labels.view(-1)  # [B*8*T]
+        
+        audio_loss = F.cross_entropy(
+            audio_logits_flat,
+            audio_labels_flat,
+            ignore_index=-100,
+            reduction='mean'
+        )
+        total_loss = total_loss + audio_loss
     
     return total_loss
 
-def higgs_text_only_loss(outputs, labels, loss_scale=None, num_items_in_batch=None) -> torch.Tensor:
-    """
-    Fallback text-only loss for debugging or when audio components fail.
-    """
-    device = next(iter(outputs.values())).device if isinstance(outputs, dict) else outputs.device
-    
-    # Get text logits
-    if hasattr(outputs, 'logits'):
-        text_logits = outputs.logits
-    elif isinstance(outputs, dict):
-        text_logits = outputs.get("text_logits", outputs.get("logits", None))
-    else:
-        text_logits = outputs
-    
-    # Get text labels
-    text_labels = labels.get("text_labels", labels.get("labels", None))
-    if text_labels is None:
-        return torch.tensor(0.0, device=device, requires_grad=True)
-    
-    text_labels = text_labels.to(device)
-    
-    # Compute CE loss
-    Vtxt = text_logits.size(-1)
-    loss = F.cross_entropy(
-        text_logits.reshape(-1, Vtxt),
-        text_labels.reshape(-1),
-        ignore_index=-100,
-        reduction='mean'
-    )
-    
-    return loss
+# Register the loss function with MS-SWIFT
+from swift.llm import register_loss
 
-# Register loss functions with MS-SWIFT's plugin system
-from swift.plugin.loss import loss_mapping
+register_loss(
+    loss_name="higgs_text_audio",
+    loss_function=higgs_text_audio_loss
+)
 
-# Add our custom loss functions to MS-SWIFT's loss mapping
-loss_mapping["higgs_text_audio"] = higgs_text_audio_loss
-loss_mapping["higgs_text_only"] = higgs_text_only_loss
-
-print(f"[INFO] Registered custom loss functions: higgs_text_audio, higgs_text_only")
-print(f"[INFO] Available loss functions: {list(loss_mapping.keys())}")
+print("[INFO] Registered higgs_text_audio loss function with MS-SWIFT")

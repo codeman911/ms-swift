@@ -1,5 +1,5 @@
 # plugins/higgs_dataset.py
-# Purpose: Custom dataset loader for ChatML format with audio paths
+# Purpose: Complete ChatML dataset loader for Higgs Audio training
 
 import json
 import os
@@ -10,175 +10,168 @@ def load_higgs_chatml_dataset(dataset_syntax, dataset_meta, **kwargs) -> Dataset
     """
     Load ChatML dataset with audio paths for on-the-fly processing.
     
-    Expected JSON format:
+    Expected JSONL format (one JSON per line):
     {
-        "id": "sample_00000001",
-        "lang": "ar", 
+        "id": "sample_0001",
+        "lang": "ar",
         "messages": [
             {"role": "system", "content": "You are a TTS model."},
-            {"role": "user", "content": "Generate speech for the assistant text."},
+            {"role": "user", "content": "Clone this voice."},
             {"role": "assistant", "content": "النص الذي يجب نطقه هنا."}
         ],
-        "ref_wav": "data/wavs/ref/sample_00000001_ref.wav",
-        "tgt_wav": "data/wavs/tgt/sample_00000001_tgt.wav"
-    }
-    
-    OR the more complex nested content format:
-    {
-        "messages": [
-            {"role": "system", "content": "..."},
-            {"role": "user", "content": [
-                {"type": "text", "text": "..."},
-                {"type": "audio", "audio_url": "path/to/ref.wav"}
-            ]},
-            {"role": "assistant", "content": [
-                {"type": "text", "text": "..."},
-                {"type": "audio", "audio_url": "path/to/tgt.wav"}
-            ]}
-        ]
+        "ref_wav": "/abs/path/ref.wav",
+        "tgt_wav": "/abs/path/target.wav"
     }
     """
-    # Extract dataset path from MS-SWIFT parameters
-    dataset_name_or_path = "../higgs-audio/lora_training_data_zr/chatml_fixed/val_chatml_samples.json"
-    print(f"[INFO] Loading Higgs ChatML dataset from: {dataset_name_or_path}")
-    
-    # Handle different input types
-    if os.path.isfile(dataset_name_or_path):
-        # Single JSON file
-        with open(dataset_name_or_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    elif os.path.isdir(dataset_name_or_path):
-        # Directory with JSON files
-        data = []
-        for filename in os.listdir(dataset_name_or_path):
-            if filename.endswith('.json') or filename.endswith('.jsonl'):
-                filepath = os.path.join(dataset_name_or_path, filename)
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    if filename.endswith('.jsonl'):
-                        # JSONL format - one JSON per line
-                        for line in f:
-                            line = line.strip()
-                            if line:
-                                data.append(json.loads(line))
-                    else:
-                        # Regular JSON
-                        file_data = json.load(f)
-                        if isinstance(file_data, list):
-                            data.extend(file_data)
-                        else:
-                            data.append(file_data)
+    # Extract dataset path from MS-SWIFT dataset syntax: "higgs-chatml-custom#path=/abs/path/file.jsonl"
+    if '#path=' in dataset_syntax:
+        dataset_path = dataset_syntax.split('#path=')[1]
     else:
-        raise ValueError(f"Dataset path not found: {dataset_name_or_path}")
+        # Fallback for direct path usage
+        dataset_path = kwargs.get('dataset_path', dataset_syntax)
     
-    print(f"[INFO] Loaded {len(data)} samples")
+    print(f"[INFO] Loading Higgs ChatML dataset from: {dataset_path}")
     
-    # Normalize data format
-    normalized_data = []
-    base_dir = os.path.dirname(dataset_name_or_path) if os.path.isfile(dataset_name_or_path) else dataset_name_or_path
+    if not os.path.exists(dataset_path):
+        print(f"[ERROR] Dataset file not found: {dataset_path}")
+        print(f"[INFO] Use: --dataset 'higgs-chatml-custom#path=/abs/path/to/data.jsonl'")
+        # Return empty dataset with proper structure
+        return Dataset.from_dict({
+            'id': [],
+            'messages': [],
+            'ref_wav': [],
+            'tgt_wav': [],
+            'lang': []
+        })
+    
+    data = []
+    try:
+        if os.path.isfile(dataset_path):
+            with open(dataset_path, 'r', encoding='utf-8') as f:
+                if dataset_path.endswith('.jsonl'):
+                    # JSONL format - one JSON per line
+                    for line_num, line in enumerate(f, 1):
+                        line = line.strip()
+                        if line:
+                            try:
+                                data.append(json.loads(line))
+                            except json.JSONDecodeError as e:
+                                print(f"[WARNING] Line {line_num}: Invalid JSON - {e}")
+                else:
+                    # Regular JSON format
+                    file_data = json.load(f)
+                    if isinstance(file_data, list):
+                        data = file_data
+                    else:
+                        data = [file_data]
+        elif os.path.isdir(dataset_path):
+            # Directory with multiple files
+            for filename in sorted(os.listdir(dataset_path)):
+                if filename.endswith(('.json', '.jsonl')):
+                    filepath = os.path.join(dataset_path, filename)
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        if filename.endswith('.jsonl'):
+                            for line in f:
+                                if line.strip():
+                                    data.append(json.loads(line))
+                        else:
+                            file_data = json.load(f)
+                            if isinstance(file_data, list):
+                                data.extend(file_data)
+                            else:
+                                data.append(file_data)
+        else:
+            raise FileNotFoundError(f"Dataset path not found: {dataset_path}")
+            
+    except Exception as e:
+        print(f"[ERROR] Failed to load dataset: {e}")
+        return Dataset.from_dict({
+            'id': [],
+            'messages': [],
+            'ref_wav': [],
+            'tgt_wav': [],
+            'lang': []
+        })
+    
+    print(f"[INFO] Loaded {len(data)} raw samples")
+    
+    # Normalize samples to consistent format
+    normalized_samples = []
+    base_dir = os.path.dirname(os.path.abspath(dataset_path))
     
     for i, sample in enumerate(data):
         try:
-            # Extract messages
+            # Validate required fields
             messages = sample.get("messages", [])
             if not messages:
-                print(f"[WARNING] Sample {i}: No messages found, skipping")
-                continue
-            
-            # Extract audio paths - handle different formats
-            ref_audio_path = None
-            tgt_audio_path = None
-            
-            # Format 1: Direct keys
-            if "ref_wav" in sample:
-                ref_audio_path = sample["ref_wav"]
-            if "tgt_wav" in sample:
-                tgt_audio_path = sample["tgt_wav"]
-            
-            # Format 2: Extract from nested content
-            if not ref_audio_path or not tgt_audio_path:
-                for msg in messages:
-                    content = msg.get("content", "")
-                    if isinstance(content, list):
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "audio":
-                                audio_url = item.get("audio_url", "")
-                                if msg.get("role") == "user" and not ref_audio_path:
-                                    ref_audio_path = audio_url
-                                elif msg.get("role") == "assistant" and not tgt_audio_path:
-                                    tgt_audio_path = audio_url
-            
-            # Resolve relative paths
-            if ref_audio_path and not os.path.isabs(ref_audio_path):
-                ref_audio_path = os.path.join(base_dir, ref_audio_path)
-            if tgt_audio_path and not os.path.isabs(tgt_audio_path):
-                tgt_audio_path = os.path.join(base_dir, tgt_audio_path)
-            
-            # Create normalized sample - handle missing lang field properly
-            normalized_sample = {
-                "id": sample.get("id", f"sample_{i:08d}"),
-                "messages": messages,
-                "ref_audio_path": ref_audio_path or "",
-                "tgt_audio_path": tgt_audio_path or "",  
-                "lang": sample.get("lang", "en") if "lang" in sample else "en",
-                "speaker": sample.get("speaker", "") if "speaker" in sample else "",
-            }
-            
-            # Validate that we have required fields
-            if not normalized_sample["messages"]:
-                print(f"[WARNING] Sample {i}: No valid messages, skipping")
+                print(f"[WARNING] Sample {i}: No messages, skipping")
                 continue
                 
-            normalized_data.append(normalized_sample)
+            ref_wav = sample.get("ref_wav", "")
+            tgt_wav = sample.get("tgt_wav", "")
+            
+            if not ref_wav or not tgt_wav:
+                print(f"[WARNING] Sample {i}: Missing audio paths, skipping")
+                continue
+            
+            # Resolve relative paths
+            if not os.path.isabs(ref_wav):
+                ref_wav = os.path.join(base_dir, ref_wav)
+            if not os.path.isabs(tgt_wav):
+                tgt_wav = os.path.join(base_dir, tgt_wav)
+            
+            # Check file existence
+            if not os.path.exists(ref_wav):
+                print(f"[WARNING] Sample {i}: ref_wav not found: {ref_wav}")
+                continue
+            if not os.path.exists(tgt_wav):
+                print(f"[WARNING] Sample {i}: tgt_wav not found: {tgt_wav}")
+                continue
+            
+            # Create normalized sample
+            normalized_sample = {
+                'id': sample.get('id', f'sample_{i:08d}'),
+                'messages': messages,
+                'ref_wav': ref_wav,
+                'tgt_wav': tgt_wav,
+                'lang': sample.get('lang', 'en')
+            }
+            
+            normalized_samples.append(normalized_sample)
             
         except Exception as e:
-            print(f"[ERROR] Failed to process sample {i}: {e}")
+            print(f"[WARNING] Sample {i}: Error processing - {e}")
             continue
     
-    print(f"[INFO] Normalized {len(normalized_data)} valid samples")
+    print(f"[INFO] Successfully processed {len(normalized_samples)} valid samples")
     
-    # Ensure consistent data types for PyArrow compatibility
-    for sample in normalized_data:
-        # Ensure messages is always a list
-        if not isinstance(sample["messages"], list):
-            sample["messages"] = []
-        
-        # Normalize messages content field - this is the main issue
-        for msg in sample["messages"]:
-            if isinstance(msg, dict):
-                content = msg.get("content", "")
-                # Convert all content to strings to avoid mixed list/non-list types
-                if isinstance(content, list):
-                    # Extract text content from complex structures
-                    text_parts = []
-                    for item in content:
-                        if isinstance(item, dict):
-                            if item.get("type") == "text":
-                                text_parts.append(item.get("text", ""))
-                            elif item.get("type") == "audio":
-                                # Keep audio reference as text
-                                text_parts.append(f"[AUDIO: {item.get('audio_url', '')}]")
-                        else:
-                            text_parts.append(str(item))
-                    msg["content"] = " ".join(text_parts)
-                elif not isinstance(content, str):
-                    msg["content"] = str(content)
-        
-        # Ensure string fields are always strings (not None)
-        for key in ["id", "ref_audio_path", "tgt_audio_path", "lang", "speaker"]:
-            if sample[key] is None:
-                sample[key] = ""
-            elif not isinstance(sample[key], str):
-                sample[key] = str(sample[key])
+    if not normalized_samples:
+        print(f"[WARNING] No valid samples found")
+        return Dataset.from_dict({
+            'id': [],
+            'messages': [],
+            'ref_wav': [],
+            'tgt_wav': [],
+            'lang': []
+        })
     
     # Convert to HuggingFace Dataset
-    dataset = Dataset.from_list(normalized_data)
+    dataset_dict = {
+        'id': [s['id'] for s in normalized_samples],
+        'messages': [s['messages'] for s in normalized_samples],
+        'ref_wav': [s['ref_wav'] for s in normalized_samples],
+        'tgt_wav': [s['tgt_wav'] for s in normalized_samples],
+        'lang': [s['lang'] for s in normalized_samples]
+    }
+    
+    dataset = Dataset.from_dict(dataset_dict)
     
     # Log sample for debugging
     if len(dataset) > 0:
         sample = dataset[0]
         print(f"[DEBUG] Sample format: {list(sample.keys())}")
         print(f"[DEBUG] First sample messages: {len(sample['messages'])} messages")
-        print(f"[DEBUG] Audio paths exist: ref={os.path.exists(sample['ref_audio_path']) if sample['ref_audio_path'] else False}, tgt={os.path.exists(sample['tgt_audio_path']) if sample['tgt_audio_path'] else False}")
+        print(f"[DEBUG] Audio paths exist: ref={os.path.exists(sample['ref_wav'])}, tgt={os.path.exists(sample['tgt_wav'])}")
     
     return dataset
 
