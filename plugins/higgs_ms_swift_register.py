@@ -16,27 +16,25 @@ def register_higgs_audio():
     """Register HiggsAudio model and configuration with MS-SWIFT."""
     
     try:
-        # Import model after patching
-        from higgs_audio.boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
-        from higgs_audio.boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
-        
-        logger.info("Loading HiggsAudio model classes...")
+        # Use already imported classes
+        logger.info("Registering HiggsAudio model classes...")
         
         # Register with transformers
         AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
         AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
         
         # Force override for the specific model we're using
-        CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
-        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
+        if hasattr(CONFIG_MAPPING, '_extra_content'):
+            CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
+        if hasattr(MODEL_FOR_CAUSAL_LM_MAPPING, '_extra_content'):
+            MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
         
         logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
-        logger.info(f"✓ HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
-        logger.info(f"✓ HiggsAudioModel has set_input_embeddings: {hasattr(HiggsAudioModel, 'set_input_embeddings')}")
-        logger.info(f"✓ HiggsAudioModel has enable_input_require_grads: {hasattr(HiggsAudioModel, 'enable_input_require_grads')}")
+        return True
         
     except Exception as e:
-        print(f"[WARNING] Failed to register HiggsAudio model: {e}")
+        logger.error(f"Failed to register HiggsAudio model: {e}")
+        return False
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -49,7 +47,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'higgs-audio'))
 from boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
 from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
 
-# MS-SWIFT APIs
+# IMMEDIATELY register HiggsAudio with transformers
+AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
+AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
+logger.info("✓ Registered HiggsAudio model with transformers on module import")
+
+# Register custom template
 from swift.llm import register_template, TemplateMeta, Template
 
 # ---- import Higgs Audio code with correct paths ----
@@ -60,9 +63,6 @@ try:
     from boson_multimodal.constants import AUDIO_IN_TOKEN, AUDIO_OUT_TOKEN
     print("[INFO] Successfully imported Higgs Audio components")
     
-    # Register HiggsAudio model with transformers auto classes
-    register_higgs_audio()
-    
     # Hook into model loading to patch any dynamically loaded models
     original_from_pretrained = AutoModelForCausalLM.from_pretrained
     
@@ -71,6 +71,10 @@ try:
         # CRITICAL: Patch HiggsAudioModel BEFORE loading
         if 'higgs' in str(pretrained_model_name_or_path).lower():
             logger.info(f"Pre-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
+            
+            # Register HiggsAudio model with transformers auto classes BEFORE loading
+            register_higgs_audio()
+            
             # Patch HiggsAudioModel BEFORE loading
             def patch_higgs_audio_model():
                 """Comprehensively patch HiggsAudioModel class with required methods."""
