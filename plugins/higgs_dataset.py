@@ -152,7 +152,7 @@ from swift.llm import register_dataset, DatasetMeta
 register_dataset(
     DatasetMeta(
         dataset_name="higgs-chatml-custom",
-        get_function=load_higgs_chatml_dataset,
+        load_function=load_higgs_chatml_dataset,
     )
 )
 
