@@ -541,17 +541,24 @@ class HiggsAudioCollator:
         # Create start indices for audio sequences
         batch_size = len(features)
         
-        # CRITICAL FIX: Flatten audio tensors for merge_input_ids_with_audio_features
-        # The model expects flattened audio codes, not [batch, codebooks, seq_len]
-        # We need to reshape from [B, C, T] to [B*T, C] for proper embedding lookup
+        # CRITICAL FIX: Reshape audio tensors for model expectations
+        # The model expects audio_in_ids as [num_codebooks, total_length]
+        # We need to reshape from [B, C, T] to [C, B*T] for proper embedding
         
-        # Flatten audio_inputs from [B, C, T] to [total_tokens, C]
+        # Reshape audio_inputs from [B, C, T] to [C, B*T]
         B, C, T_in = audio_inputs.shape
-        audio_inputs_flat = audio_inputs.permute(0, 2, 1).reshape(-1, C)  # [B*T, C]
+        # Method: transpose batch and codebook dims, then flatten batch and time
+        audio_inputs_flat = audio_inputs.transpose(0, 1).reshape(C, B * T_in)  # [C, B*T]
         
-        # Flatten padded_tgt_codes similarly
+        # Reshape padded_tgt_codes similarly from [B, C, T] to [C, B*T]
         _, _, T_out = padded_tgt_codes.shape
-        audio_out_flat = padded_tgt_codes.permute(0, 2, 1).reshape(-1, C)  # [B*T, C]
+        audio_out_flat = padded_tgt_codes.transpose(0, 1).reshape(C, B * T_out)  # [C, B*T]
+        
+        # Debug: print shapes to verify
+        print(f"[DEBUG] audio_inputs_flat shape: {audio_inputs_flat.shape} (expected: [{C}, {B*T_in}])")
+        print(f"[DEBUG] audio_out_flat shape: {audio_out_flat.shape} (expected: [{C}, {B*T_out}])")
+        print(f"[DEBUG] audio_in_ids_start: {audio_in_ids_start}")
+        print(f"[DEBUG] audio_out_ids_start: {audio_out_ids_start}")
         
         # Create cumulative start indices for flattened sequences
         # Each batch item contributes T tokens, so starts are [0, T, 2*T, ...]
@@ -567,9 +574,9 @@ class HiggsAudioCollator:
             "attention_mask": attention_mask,
             "label_ids": text_labels,                  # text labels (shifted)
             "label_audio_ids": audio_labels,           # audio labels (masked) - keep original shape
-            "audio_in_ids": audio_inputs_flat,         # FLATTENED: [total_tokens, num_codebooks]
+            "audio_in_ids": audio_inputs_flat,         # RESHAPED: [num_codebooks, total_tokens]
             "audio_in_ids_start": audio_in_ids_start,  # cumulative start indices
-            "audio_out_ids": audio_out_flat,           # FLATTENED: [total_tokens, num_codebooks]
+            "audio_out_ids": audio_out_flat,           # RESHAPED: [num_codebooks, total_tokens]
             "audio_out_ids_start": audio_out_ids_start,# cumulative start indices
             "audio_out_ids_start_group_loc": audio_out_ids_start_group_loc, # batch indices
             "audio_features": padded_ref_codes,        # keep as [B, C, T] for features
