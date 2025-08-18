@@ -34,10 +34,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- 1. Validating Dataset Load Function ---
 
-def load_validating_higgs_chatml_dataset(path: str, *args, **kwargs):
+def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **kwargs):
     """
     Load function for validating Higgs ChatML dataset with on-the-fly audio tokenization.
     """
+    # Extract path from DatasetSyntax object
+    path = dataset_syntax.dataset if hasattr(dataset_syntax, 'dataset') else str(dataset_syntax)
     logger.info(f"Loading ValidatingHiggsChatMLDataset from {path}...")
     
     # Load the dataset JSON
