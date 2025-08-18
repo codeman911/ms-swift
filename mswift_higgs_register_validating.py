@@ -185,6 +185,17 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     hf_dataset = HFDataset.from_list(normalized_data, features=features)
     
     logger.info(f"ValidatingHiggsChatMLDataset: {len(hf_dataset)} samples with robust Arrow schema and dual content format.")
+    
+    # Debug: Check first sample structure
+    if len(hf_dataset) > 0:
+        sample = hf_dataset[0]
+        logger.info(f"DEBUG - First sample structure: {list(sample.keys())}")
+        logger.info(f"DEBUG - Messages type: {type(sample['messages'])}")
+        logger.info(f"DEBUG - Messages length: {len(sample['messages'])}")
+        if len(sample['messages']) > 0:
+            logger.info(f"DEBUG - First message: {sample['messages'][0]}")
+            logger.info(f"DEBUG - First message keys: {list(sample['messages'][0].keys())}")
+    
     return hf_dataset
 
 # Register the validating dataset
@@ -222,9 +233,34 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
         audio_stream_eos_id=audio_stream_eos_id,
     )
 
-# Register standard template - MS-SWIFT will handle messages correctly
+# Custom template class with debugging
+from swift.llm.template.base import Template
+
+class DebuggingValidatingTemplate(Template):
+    def encode(self, inputs, return_length=False, **kwargs):
+        """Override encode to debug what MS-SWIFT receives."""
+        logger.info(f"DEBUG - Template.encode received inputs type: {type(inputs)}")
+        logger.info(f"DEBUG - Template.encode received inputs keys: {list(inputs.keys()) if isinstance(inputs, dict) else 'Not a dict'}")
+        
+        if isinstance(inputs, dict) and 'messages' in inputs:
+            messages = inputs['messages']
+            logger.info(f"DEBUG - Messages field type: {type(messages)}")
+            logger.info(f"DEBUG - Messages length: {len(messages) if hasattr(messages, '__len__') else 'No length'}")
+            if hasattr(messages, '__len__') and len(messages) > 0:
+                logger.info(f"DEBUG - First message type: {type(messages[0])}")
+                logger.info(f"DEBUG - First message: {messages[0]}")
+        
+        try:
+            return super().encode(inputs, return_length=return_length, **kwargs)
+        except Exception as e:
+            logger.error(f"DEBUG - Template encoding failed: {e}")
+            logger.error(f"DEBUG - Full inputs: {inputs}")
+            raise
+
+# Register custom debugging template
 register_template(TemplateMeta(
     template_type="higgs-chatml-validating",
+    template_cls=DebuggingValidatingTemplate,
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
