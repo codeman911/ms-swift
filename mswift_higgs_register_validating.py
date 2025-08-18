@@ -195,7 +195,7 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
 # Register the validating dataset
 register_dataset(DatasetMeta(
     dataset_name="higgs-chatml-validating",
-    dataset_path="../higgs-audio/lora_training_data_zr/chatml_fixed/train_chatml_samples.json",
+    dataset_path="../higgs-audio/lora_training_data_zr/chatml_fixed/val_chatml_samples.json",
     load_function=load_validating_higgs_chatml_dataset,
 ))
 
@@ -233,13 +233,36 @@ from swift.llm.template.base import Template
 from swift.llm.template.register import TemplateMeta, register_template
 from typing import List, Dict, Any, Optional
 
+# Simple dataclass to replace ChatMLDatasetSample when higgs-audio not available
+@dataclass
+class SimpleChatMLSample:
+    """Simplified version of ChatMLDatasetSample for MS-SWIFT compatibility."""
+    input_ids: torch.Tensor
+    label_ids: torch.Tensor
+    audio_ids_concat: torch.Tensor
+    audio_ids_start: torch.Tensor
+    audio_waveforms_concat: torch.Tensor
+    audio_waveforms_start: torch.Tensor
+    audio_sample_rate: torch.Tensor
+    audio_speaker_indices: torch.Tensor
+    audio_label_ids_concat: Optional[torch.Tensor] = None
+    reward: Optional[float] = None
+
 class ValidatingHiggsChatMLTemplate(Template):
     """Custom template to use ValidatingHiggsAudioSampleCollator for audio-aware collation."""
     
     def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
         """Custom data collator that converts MS-SWIFT dicts to ChatMLDatasetSample objects."""
         import torch
-        from higgs_audio.boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
+        
+        # Try to import ChatMLDatasetSample, fall back to simplified version if not available
+        try:
+            from boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
+            SampleClass = ChatMLDatasetSample
+            print("[INFO] Using ChatMLDatasetSample from higgs-audio")
+        except ImportError:
+            print("[WARNING] ChatMLDatasetSample not available, using SimpleChatMLSample")
+            SampleClass = SimpleChatMLSample
         
         tokenizer = self.tokenizer
         
@@ -259,9 +282,9 @@ class ValidatingHiggsChatMLTemplate(Template):
             if not isinstance(label_ids, torch.Tensor):
                 label_ids = torch.tensor(label_ids, dtype=torch.long)
             
-            # Create ChatMLDatasetSample with required fields
+            # Create sample with required fields
             # For audio fields, use empty tensors as defaults since MS-SWIFT doesn't provide them directly
-            sample = ChatMLDatasetSample(
+            sample = SampleClass(
                 input_ids=input_ids,
                 label_ids=label_ids,
                 audio_ids_concat=torch.tensor([[]], dtype=torch.long),  # Empty 2D tensor

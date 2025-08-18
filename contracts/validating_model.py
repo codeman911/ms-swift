@@ -3,17 +3,47 @@ from __future__ import annotations
 import torch
 from typing import Optional
 import sys
-import os
+from pathlib import Path
+
+# Add higgs-audio to Python path
+current_dir = Path(__file__).parent.parent.absolute()
+higgs_audio_path = current_dir / "higgs-audio"
+if higgs_audio_path.exists():
+    sys.path.insert(0, str(higgs_audio_path))
+    print(f"[INFO] Added higgs-audio to Python path: {higgs_audio_path}")
+else:
+    print(f"[WARNING] higgs-audio directory not found at {higgs_audio_path}")
+    # Try alternative paths
+    for alt_path in [Path("/vs/higgs-audio"), current_dir.parent / "higgs-audio"]:
+        if alt_path.exists():
+            sys.path.insert(0, str(alt_path))
+            print(f"[INFO] Using higgs-audio from: {alt_path}")
+            break
+    else:
+        print(f"[ERROR] Cannot find higgs-audio directory. Trying to continue...")
+
+import torch
+import torch.nn as nn
+from typing import Optional, Dict, Any, Union, List, Tuple
+from transformers import LlamaTokenizer, LlamaForCausalLM
+from peft import get_peft_model, LoraConfig, PeftModel
+
+# Try to import HiggsAudioModel with fallback
+try:
+    from higgs_audio.models.higgs_audio_model import HiggsAudioModel
+    from higgs_audio.models.model_utils import HiggsAudioConfig
+    print("[INFO] Successfully imported HiggsAudioModel")
+except ImportError as e:
+    print(f"[WARNING] Failed to import HiggsAudioModel: {e}")
+    # Create placeholder classes
+    class HiggsAudioModel:
+        pass
+    class HiggsAudioConfig:
+        pass
+
 import logging
-
-# Add higgs-audio to path
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'higgs-audio'))
-
-# Setup debug logger
-debug_logger = logging.getLogger("ValidatingHiggsAudio")
-debug_logger.setLevel(logging.INFO)
-
-from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
+logging.basicConfig(level=logging.DEBUG)
+debug_logger = logging.getLogger("validating_model")
 
 from .validators import (
     assert_is_long,
