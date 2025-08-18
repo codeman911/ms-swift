@@ -51,30 +51,44 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     logger.info(f"Loaded {len(data)} samples from {path}")
     
     def normalize_content(content, role):
-        """Normalize ALL content to consistent list format for Arrow schema."""
-        # Convert everything to list format to avoid Arrow type mixing
-        if isinstance(content, str):
-            return [{"type": "text", "text": content}]
-        elif isinstance(content, list):
-            # Already in list format, ensure each item has proper structure
-            normalized_list = []
-            for item in content:
-                if isinstance(item, dict):
-                    # Ensure all required keys exist with defaults
-                    normalized_item = {
-                        "type": item.get("type", "text"),
-                        "text": item.get("text", ""),
-                        "audio_url": item.get("audio_url", None),
-                        "raw_audio": item.get("raw_audio", ""),
-                        "duration": item.get("duration", None),
-                        "offset": item.get("offset", None)
-                    }
-                    normalized_list.append(normalized_item)
-                else:
-                    normalized_list.append({"type": "text", "text": str(item), "audio_url": None, "raw_audio": "", "duration": None, "offset": None})
-            return normalized_list
+        """Normalize content for Arrow schema while preserving MS-SWIFT template compatibility."""
+        if role == "system":
+            # System messages should be strings for MS-SWIFT template
+            if isinstance(content, str):
+                return content
+            elif isinstance(content, list) and len(content) == 1 and content[0].get("type") == "text":
+                return content[0].get("text", "")
+            elif isinstance(content, list):
+                # Extract all text content for system message
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                return " ".join(text_parts) if text_parts else ""
+            else:
+                return str(content)
         else:
-            return [{"type": "text", "text": str(content), "audio_url": None, "raw_audio": "", "duration": None, "offset": None}]
+            # User/assistant messages: normalize to consistent list format for multimodal
+            if isinstance(content, str):
+                return [{"type": "text", "text": content, "audio_url": None, "raw_audio": "", "duration": None, "offset": None}]
+            elif isinstance(content, list):
+                normalized_list = []
+                for item in content:
+                    if isinstance(item, dict):
+                        normalized_item = {
+                            "type": item.get("type", "text"),
+                            "text": item.get("text", ""),
+                            "audio_url": item.get("audio_url", None),
+                            "raw_audio": item.get("raw_audio", ""),
+                            "duration": item.get("duration", None),
+                            "offset": item.get("offset", None)
+                        }
+                        normalized_list.append(normalized_item)
+                    else:
+                        normalized_list.append({"type": "text", "text": str(item), "audio_url": None, "raw_audio": "", "duration": None, "offset": None})
+                return normalized_list
+            else:
+                return [{"type": "text", "text": str(content), "audio_url": None, "raw_audio": "", "duration": None, "offset": None}]
     
     # Normalize messages to ensure consistent content structure
     normalized_messages = []
@@ -163,32 +177,9 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
         audio_stream_eos_id=audio_stream_eos_id,
     )
 
-# Custom template class to handle normalized list content
-from swift.llm.template.base import Template
-
-class ValidatingHiggsChatMLTemplate(Template):
-    def __init__(self, tokenizer, system_prefix=None, *args, **kwargs):
-        super().__init__(tokenizer=tokenizer, **kwargs)
-        self.system_prefix = system_prefix
-    
-    def _get_content_text(self, content):
-        """Extract text from normalized content structure."""
-        if isinstance(content, str):
-            return content
-        elif isinstance(content, list):
-            # Extract text parts from normalized list format
-            text_parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text_parts.append(item.get("text", ""))
-            return " ".join(text_parts) if text_parts else ""
-        else:
-            return str(content)
-
-# Register the validating template using TemplateMeta with custom class
+# Register the validating template using TemplateMeta (simplified approach)
 register_template(TemplateMeta(
     template_type="higgs-chatml-validating",
-    template_cls=ValidatingHiggsChatMLTemplate,
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
