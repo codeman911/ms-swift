@@ -109,25 +109,29 @@ try:
         # Apply the patches immediately
         patch_higgs_audio_model()
         
-        # Create wrapper class to handle labels -> label_ids mapping
-        class HiggsAudioModelWrapper(HiggsAudioModel):
-            """Wrapper to map 'labels' to 'label_ids' for MS-SWIFT compatibility."""
-            
-            def forward(self, labels=None, **kwargs):
-                # Map labels to label_ids if present
-                if labels is not None and 'label_ids' not in kwargs:
-                    kwargs['label_ids'] = labels
-                
-                # Call parent forward
-                return super().forward(**kwargs)
+        # Patch HiggsAudioModel forward directly to handle labels
+        original_forward = HiggsAudioModel.forward
         
-        # Register with transformers using the wrapper
+        def wrapped_forward(self, labels=None, **kwargs):
+            """Forward that maps 'labels' to 'label_ids' for MS-SWIFT compatibility."""
+            # Map labels to label_ids if present
+            if labels is not None and 'label_ids' not in kwargs:
+                kwargs['label_ids'] = labels
+            
+            # Call original forward
+            return original_forward(self, **kwargs)
+        
+        # Replace the forward method
+        HiggsAudioModel.forward = wrapped_forward
+        logger.info("✓ Patched HiggsAudioModel.forward to handle labels -> label_ids mapping")
+        
+        # Register with transformers
         AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
-        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModelWrapper, exist_ok=True)
+        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
         
         # Force override for the specific model we're using
         CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
-        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModelWrapper
+        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
         
         logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
         logger.info(f"✓ HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
@@ -143,8 +147,6 @@ try:
             if 'higgs' in str(pretrained_model_name_or_path).lower():
                 logger.info(f"Pre-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
                 patch_higgs_audio_model()
-                # Force use wrapper class
-                kwargs['_target_class'] = HiggsAudioModelWrapper
             
             model = original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
             
