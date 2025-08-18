@@ -70,7 +70,6 @@ swift sft \
     --report_to tensorboard \
     --run_name higgs_audio_lora_plugins \
     --save_safetensors true \
-    --resume_from_checkpoint auto \
     --ignore_data_skip false \
     --lazy_tokenize false \
     --preprocess_num_proc 8 \
