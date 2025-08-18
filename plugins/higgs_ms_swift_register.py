@@ -273,23 +273,39 @@ class HiggsChatMLTemplate(Template):
         self._collator = None
 
     # --------- required by SWIFT ----------
-    def _encode(self, item: Dict[str, Any]) -> Dict[str, Any]:
+    def _encode(self, inputs) -> Dict[str, Any]:
         """
         MS-SWIFT expects encoded output with input_ids, attention_mask, etc.
-        For our use case, we'll do minimal text tokenization here and let the 
-        data collator handle the full multimodal processing.
+        Handle both StdTemplateInputs objects and dictionary inputs.
         """
         # Initialize text tokenizer if needed
         self._init_text_tokenizer()
         
-        # Extract messages and create a simple text representation
-        messages = item.get('messages', [])
-        text_content = ""
+        # Handle StdTemplateInputs object or dictionary
+        if hasattr(inputs, 'messages'):
+            # StdTemplateInputs object
+            messages = inputs.messages or []
+            system = inputs.system
+            original_item = {
+                'messages': messages,
+                'system': system,
+            }
+        else:
+            # Dictionary input  
+            messages = inputs.get('messages', [])
+            system = inputs.get('system')
+            original_item = inputs
         
+        # Create ChatML format text
+        text_content = ""
+        if system:
+            text_content += f"<|im_start|>system\n{system}<|im_end|>\n"
+            
         for msg in messages:
-            role = msg.get('role', '')
-            content = msg.get('content', '')
-            text_content += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+            if isinstance(msg, dict):
+                role = msg.get('role', '')
+                content = msg.get('content', '')
+                text_content += f"<|im_start|>{role}\n{content}<|im_end|>\n"
         
         # Tokenize the text content
         encoded = self._text_tok(
@@ -300,13 +316,13 @@ class HiggsChatMLTemplate(Template):
             return_tensors=None
         )
         
-        # Add the original item data for the collator to use
+        # Return MS-SWIFT expected format
         result = {
             'input_ids': encoded['input_ids'],
             'attention_mask': encoded.get('attention_mask', [1] * len(encoded['input_ids'])),
             'labels': encoded['input_ids'].copy(),  # Will be properly shifted in collator
             # Preserve original data for collator
-            '_original_item': item
+            '_original_item': original_item
         }
         
         return result
