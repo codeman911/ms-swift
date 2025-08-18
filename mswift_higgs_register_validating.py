@@ -234,38 +234,59 @@ from swift.llm.template.register import TemplateMeta, register_template
 from typing import List, Dict, Any, Optional
 
 class ValidatingHiggsChatMLTemplate(Template):
-    """Custom template class with ValidatingHiggsAudioSampleCollator."""
+    """Custom template to use ValidatingHiggsAudioSampleCollator for audio-aware collation."""
     
     def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
-        """Use ValidatingHiggsAudioSampleCollator for audio-aware collation."""
+        """Custom data collator that converts MS-SWIFT dicts to ChatMLDatasetSample objects."""
+        import torch
+        from higgs_audio.boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
         
-        # Get the tokenizer from the template
         tokenizer = self.tokenizer
         
-        # Initialize ValidatingHiggsAudioSampleCollator
-        from transformers.models.whisper.processing_whisper import WhisperProcessor
+        # Initialize WhisperProcessor for audio feature processing
         whisper_processor = WhisperProcessor.from_pretrained("openai/whisper-base")
         
-        # Get special token IDs from tokenizer
-        audio_in_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO|>") 
-        audio_out_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO_OUT|>")
-        pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+        # Convert MS-SWIFT dictionary format to ChatMLDatasetSample objects
+        converted_batch = []
+        for item in batch:
+            # Extract fields from MS-SWIFT dict format
+            input_ids = item.get('input_ids', torch.tensor([], dtype=torch.long))
+            label_ids = item.get('labels', torch.tensor([], dtype=torch.long))
+            
+            # Convert to tensors if they aren't already
+            if not isinstance(input_ids, torch.Tensor):
+                input_ids = torch.tensor(input_ids, dtype=torch.long)
+            if not isinstance(label_ids, torch.Tensor):
+                label_ids = torch.tensor(label_ids, dtype=torch.long)
+            
+            # Create ChatMLDatasetSample with required fields
+            # For audio fields, use empty tensors as defaults since MS-SWIFT doesn't provide them directly
+            sample = ChatMLDatasetSample(
+                input_ids=input_ids,
+                label_ids=label_ids,
+                audio_ids_concat=torch.tensor([[]], dtype=torch.long),  # Empty 2D tensor
+                audio_ids_start=torch.tensor([], dtype=torch.long),
+                audio_waveforms_concat=torch.tensor([], dtype=torch.float32),
+                audio_waveforms_start=torch.tensor([], dtype=torch.long),
+                audio_sample_rate=torch.tensor([], dtype=torch.float32),
+                audio_speaker_indices=torch.tensor([], dtype=torch.long),
+                audio_label_ids_concat=None,
+                reward=None,
+            )
+            converted_batch.append(sample)
         
-        # Audio stream tokens (from Higgs Audio config)
-        audio_stream_bos_id = 1024  # Start of audio sequence
-        audio_stream_eos_id = 1025  # End of audio sequence
-        
+        # Create the ValidatingHiggsAudioSampleCollator
         collator = ValidatingHiggsAudioSampleCollator(
             whisper_processor=whisper_processor,
-            audio_in_token_id=audio_in_token_id,
-            audio_out_token_id=audio_out_token_id,
-            pad_token_id=pad_token_id,
-            audio_stream_bos_id=audio_stream_bos_id,
-            audio_stream_eos_id=audio_stream_eos_id,
+            audio_in_token_id=tokenizer.convert_tokens_to_ids("<|AUDIO|>"),
+            audio_out_token_id=tokenizer.convert_tokens_to_ids("<|AUDIO_OUT|>"),
+            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+            audio_stream_bos_id=1024,  # Audio stream beginning token ID
+            audio_stream_eos_id=1025,  # Audio stream ending token ID
         )
         
-        # Use the ValidatingHiggsAudioSampleCollator
-        return collator(batch)
+        # Call the HiggsAudio collator with the converted batch
+        return collator(converted_batch)
 
 # Register template with custom class
 register_template(TemplateMeta(
