@@ -36,9 +36,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **kwargs):
     """
-    Load function for validating Higgs ChatML dataset with on-the-fly audio tokenization.
+    Load function for validating Higgs ChatML dataset with robust Arrow schema.
     """
-    from datasets import Dataset as HFDataset
+    from datasets import Dataset as HFDataset, Features, Value, Sequence
     
     # Extract path from DatasetSyntax object
     path = dataset_syntax.dataset if hasattr(dataset_syntax, 'dataset') else str(dataset_syntax)
@@ -50,57 +50,89 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     
     logger.info(f"Loaded {len(data)} samples from {path}")
     
-    def normalize_content(content, role):
-        """Normalize ALL content to consistent list format for Arrow schema compatibility."""
-        # CRITICAL: ALL content must be list format to avoid Arrow type mixing
+    def normalize_content(content):
+        """Normalize ALL content to bulletproof consistent structure."""
         if isinstance(content, str):
-            return [{"type": "text", "text": content, "audio_url": "", "raw_audio": "", "duration": 0.0, "offset": 0.0}]
+            return [{
+                "type": "text",
+                "text": content,
+                "audio_url": "",
+                "raw_audio": "",
+                "duration": 0.0,
+                "offset": 0.0
+            }]
         elif isinstance(content, list):
             normalized_list = []
             for item in content:
                 if isinstance(item, dict):
-                    # Ensure all required keys exist with consistent types
                     normalized_item = {
                         "type": str(item.get("type", "text")),
                         "text": str(item.get("text", "")),
-                        "audio_url": str(item.get("audio_url", "")) if item.get("audio_url") is not None else "",
+                        "audio_url": str(item.get("audio_url") or ""),
                         "raw_audio": str(item.get("raw_audio", "")),
-                        "duration": float(item.get("duration", 0.0)) if item.get("duration") is not None else 0.0,
-                        "offset": float(item.get("offset", 0.0)) if item.get("offset") is not None else 0.0
+                        "duration": float(item.get("duration") or 0.0),
+                        "offset": float(item.get("offset") or 0.0)
                     }
                     normalized_list.append(normalized_item)
                 else:
-                    normalized_list.append({"type": "text", "text": str(item), "audio_url": "", "raw_audio": "", "duration": 0.0, "offset": 0.0})
+                    normalized_list.append({
+                        "type": "text",
+                        "text": str(item),
+                        "audio_url": "",
+                        "raw_audio": "",
+                        "duration": 0.0,
+                        "offset": 0.0
+                    })
             return normalized_list
         else:
-            return [{"type": "text", "text": str(content), "audio_url": "", "raw_audio": "", "duration": 0.0, "offset": 0.0}]
+            return [{
+                "type": "text",
+                "text": str(content),
+                "audio_url": "",
+                "raw_audio": "",
+                "duration": 0.0,
+                "offset": 0.0
+            }]
     
-    # Normalize messages to ensure consistent content structure
-    normalized_messages = []
+    def extract_text_from_content(content):
+        """Extract text for MS-SWIFT template processing."""
+        if isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+            return " ".join(text_parts).strip()
+        return str(content)
+    
+    # Dual processing: normalized for dataset + text extracted for templates
+    normalized_data = []
     for sample in data:
         messages = sample.get("messages", [])
-        normalized_sample_messages = []
+        
+        # Process messages with dual format
+        processed_messages = []
         for msg in messages:
-            role = msg.get("role", "user")
-            normalized_msg = {
+            role = str(msg.get("role", "user"))
+            content = msg.get("content", "")
+            
+            # Normalize content for Arrow schema
+            normalized_content = normalize_content(content)
+            
+            # Add both normalized content and extracted text
+            processed_msg = {
                 "role": role,
-                "content": normalize_content(msg.get("content", ""), role)
+                "content": normalized_content,
+                "text_content": extract_text_from_content(normalized_content)  # For template processing
             }
-            normalized_sample_messages.append(normalized_msg)
-        normalized_messages.append(normalized_sample_messages)
-    
-    # Create dataset list for from_list method (avoids Arrow type mixing)
-    dataset_list = []
-    for i, sample in enumerate(data):
-        dataset_list.append({
-            "messages": normalized_messages[i],
-            "speaker": sample.get("speaker", None),
-            "start_index": sample.get("start_index", 0),
+            processed_messages.append(processed_msg)
+        
+        normalized_data.append({
+            "messages": processed_messages,
+            "speaker": str(sample.get("speaker", "")),
+            "start_index": int(sample.get("start_index", 0))
         })
     
-    # Define explicit Features schema with consistent types
-    from datasets import Features, Value, Sequence
-    
+    # Define bulletproof Features schema
     features = Features({
         "messages": Sequence({
             "role": Value("string"),
@@ -111,16 +143,17 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
                 "raw_audio": Value("string"),
                 "duration": Value("float64"),
                 "offset": Value("float64")
-            })
+            }),
+            "text_content": Value("string")
         }),
         "speaker": Value("string"),
         "start_index": Value("int64")
     })
     
-    # Create dataset with explicit schema to prevent Arrow type conflicts
-    hf_dataset = HFDataset.from_list(dataset_list, features=features)
+    # Create dataset with explicit schema
+    hf_dataset = HFDataset.from_list(normalized_data, features=features)
     
-    logger.info(f"ValidatingHiggsChatMLDataset created with {len(hf_dataset)} samples and consistent Arrow schema.")
+    logger.info(f"ValidatingHiggsChatMLDataset: {len(hf_dataset)} samples with robust Arrow schema and dual content format.")
     return hf_dataset
 
 # Register the validating dataset
@@ -158,9 +191,42 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
         audio_stream_eos_id=audio_stream_eos_id,
     )
 
-# Register the validating template using TemplateMeta (simplified approach)
+# Custom template class to handle dual content format
+from swift.llm.template.base import Template
+
+class ValidatingHiggsChatMLTemplate(Template):
+    def _encode_messages(self, messages):
+        """Override to use text_content field for encoding."""
+        # Extract text from dual format messages
+        processed_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            # Use extracted text_content instead of complex content structure
+            text_content = msg.get("text_content", "")
+            if not text_content and "content" in msg:
+                # Fallback extraction if text_content not available
+                content = msg["content"]
+                if isinstance(content, list):
+                    text_parts = []
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text_parts.append(item.get("text", ""))
+                    text_content = " ".join(text_parts).strip()
+                else:
+                    text_content = str(content)
+            
+            processed_messages.append({
+                "role": role,
+                "content": text_content
+            })
+        
+        # Use parent class encoding with processed messages
+        return super()._encode_messages(processed_messages)
+
+# Register template with custom class
 register_template(TemplateMeta(
     template_type="higgs-chatml-validating",
+    template_cls=ValidatingHiggsChatMLTemplate,
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
