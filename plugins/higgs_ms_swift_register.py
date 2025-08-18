@@ -413,7 +413,7 @@ class HiggsAudioCollator:
                     text_sequence += f"<|start_header_id|>assistant<|end_header_id|>\n\n{AUDIO_OUT_TOKEN} {content}<|eot_id|>"
             
             # Tokenize the text sequence
-            text_encoding = self._text_tok(
+            text_encoding = self.text_tokenizer(
                 text_sequence,
                 padding=False,
                 truncation=True,
