@@ -336,36 +336,43 @@ def get_validating_higgs_audio_model(model_dir: str,
     os.environ['USE_HF'] = '1'
     os.environ['USE_MODELSCOPE_HUB'] = '0'
 
-    config = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     if getattr(tokenizer, "pad_token_id", None) is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     model = None
     if load_model:
-        # Use the proper function from contracts.validating_model
-        model, _ = get_validating_higgs_audio_model_from_contracts(
-            model_dir,
-            torch_dtype=model_info.torch_dtype,
-            **model_kwargs
-        )
+        try:
+            # Try to load HiggsAudioModel if available
+            try:
+                from higgs_audio.models.higgs_audio_model import HiggsAudioModel
+                base_model = HiggsAudioModel.from_pretrained(
+                    model_dir,
+                    torch_dtype=model_info.torch_dtype,
+                    trust_remote_code=True,
+                    **model_kwargs
+                )
+                logger.info("Successfully loaded HiggsAudioModel")
+            except Exception as e:
+                logger.warning(f"Failed to load HiggsAudioModel: {e}, using AutoModelForCausalLM")
+                from transformers import AutoModelForCausalLM
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    model_dir,
+                    torch_dtype=model_info.torch_dtype,
+                    trust_remote_code=True,
+                    **model_kwargs
+                )
+            
+            # Wrap in ValidatingHiggsAudioModel
+            model = ValidatingHiggsAudioModel(base_model)
+            logger.info("Created ValidatingHiggsAudioModel wrapper")
+            
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            raise
 
     logger.info("ValidatingHiggsAudioModel and tokenizer prepared.")
     return model, tokenizer
-
-def get_validating_higgs_audio_model_from_contracts(model_id_or_path: str, **kwargs):
-    """Helper function to load ValidatingHiggsAudioModel using contracts module."""
-    try:
-        from contracts.validating_model import get_validating_higgs_audio_model as load_model
-        return load_model(model_id_or_path, **kwargs)
-    except Exception as e:
-        logger.warning(f"Failed to load from contracts: {e}, falling back to LlamaForCausalLM")
-        # Fallback to standard LlamaForCausalLM wrapped in ValidatingHiggsAudioModel
-        from transformers import LlamaForCausalLM, LlamaTokenizer
-        base_model = LlamaForCausalLM.from_pretrained(model_id_or_path, **kwargs)
-        tokenizer = LlamaTokenizer.from_pretrained(model_id_or_path)
-        validating_model = ValidatingHiggsAudioModel(base_model)
-        return validating_model, tokenizer
 
 # Register the validating model
 register_model(ModelMeta(
