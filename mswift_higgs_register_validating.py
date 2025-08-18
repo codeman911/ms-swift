@@ -3,6 +3,11 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 
+# Force HuggingFace Hub download (set before any imports)
+os.environ['USE_HF'] = '1'
+os.environ['USE_MODELSCOPE_HUB'] = '0'
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+
 import torch
 import json
 import librosa
@@ -140,7 +145,8 @@ class ValidatingHiggsChatMLTemplate(Template):
     """
     Validating template that uses ValidatingHiggsAudioSampleCollator for strict validation.
     """
-    def __init__(self, tokenizer, **kwargs):
+    def __init__(self, tokenizer, system_prefix=None, *args, **kwargs):
+        # MS-SWIFT passes additional positional arguments like system_prefix
         super().__init__(template_type="higgs-chatml-validating", tokenizer=tokenizer, **kwargs)
         logger.info("Initializing ValidatingHiggsChatMLTemplate...")
         
@@ -208,6 +214,10 @@ def get_validating_higgs_audio_model(model_dir: str,
     Matches ms-swift get_function signature.
     """
     logger.info("Loading ValidatingHiggsAudioModel and tokenizer...")
+    
+    # Force HuggingFace Hub download
+    os.environ['USE_HF'] = '1'
+    os.environ['USE_MODELSCOPE_HUB'] = '0'
 
     config = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
@@ -231,11 +241,12 @@ def get_validating_higgs_audio_model(model_dir: str,
 register_model(ModelMeta(
     model_type="higgs-audio-validating",
     model_groups=[
-        ModelGroup([Model(ms_model_id=None, hf_model_id="bosonai/higgs-audio-v2-generation-3B-base")])
+        ModelGroup([Model(hf_model_id="bosonai/higgs-audio-v2-generation-3B-base")])
     ],
     template="higgs-chatml-validating",
     get_function=get_validating_higgs_audio_model,
     model_arch="higgs-audio",
+    model_source="huggingface",
 ))
 
 logger.info("Validating Higgs Audio registration completed successfully.")
