@@ -214,3 +214,25 @@ class ValidatingHiggsAudioModel(HiggsAudioModel):
                 raise ValueError(f"[{ctx}] ret.audio_logits must be 3-D, got {ret.audio_logits.ndim}")
 
         return ret
+
+    def get_input_embeddings(self):
+        """Return input embeddings for gradient checkpointing compatibility."""
+        return self.embed_tokens
+
+    def set_input_embeddings(self, value):
+        """Set input embeddings for gradient checkpointing compatibility."""
+        self.embed_tokens = value
+
+    def get_output_embeddings(self):
+        """Return output embeddings for gradient checkpointing compatibility."""
+        return self.audio_decoder_proj.text_lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        """Set output embeddings for gradient checkpointing compatibility."""
+        self.audio_decoder_proj.text_lm_head = new_embeddings
+
+    def tie_weights(self):
+        """Tie input and output embeddings if needed."""
+        # Call parent implementation if it exists
+        if hasattr(super(), 'tie_weights'):
+            super().tie_weights()
