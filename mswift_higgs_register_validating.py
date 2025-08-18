@@ -50,14 +50,24 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     
     logger.info(f"Loaded {len(data)} samples from {path}")
     
-    def normalize_content(content):
-        """Normalize content to consistent format for Arrow schema."""
-        if isinstance(content, str):
-            return [{"type": "text", "text": content}]
-        elif isinstance(content, list):
-            return content
+    def normalize_content(content, role):
+        """Normalize content based on role - system messages stay as strings."""
+        if role == "system":
+            # System messages should always be strings for MS-SWIFT template
+            if isinstance(content, str):
+                return content
+            elif isinstance(content, list) and len(content) == 1 and content[0].get("type") == "text":
+                return content[0].get("text", "")
+            else:
+                return str(content)
         else:
-            return [{"type": "text", "text": str(content)}]
+            # User/assistant messages can have mixed content (text + audio)
+            if isinstance(content, str):
+                return content  # Keep as string if it's already a string
+            elif isinstance(content, list):
+                return content  # Keep as list for multimodal content
+            else:
+                return str(content)
     
     # Normalize messages to ensure consistent content structure
     normalized_messages = []
@@ -65,9 +75,10 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
         messages = sample.get("messages", [])
         normalized_sample_messages = []
         for msg in messages:
+            role = msg.get("role", "user")
             normalized_msg = {
-                "role": msg.get("role", "user"),
-                "content": normalize_content(msg.get("content", ""))
+                "role": role,
+                "content": normalize_content(msg.get("content", ""), role)
             }
             normalized_sample_messages.append(normalized_msg)
         normalized_messages.append(normalized_sample_messages)
