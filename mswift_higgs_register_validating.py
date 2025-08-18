@@ -38,6 +38,8 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     """
     Load function for validating Higgs ChatML dataset with on-the-fly audio tokenization.
     """
+    from datasets import Dataset as HFDataset
+    
     # Extract path from DatasetSyntax object
     path = dataset_syntax.dataset if hasattr(dataset_syntax, 'dataset') else str(dataset_syntax)
     logger.info(f"Loading ValidatingHiggsChatMLDataset from {path}...")
@@ -46,80 +48,19 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
-    # Load the Higgs Audio tokenizer for on-the-fly tokenization
-    audio_tokenizer = load_higgs_audio_tokenizer("bosonai/higgs-audio-v2-tokenizer", device="cpu")
     logger.info(f"Loaded {len(data)} samples from {path}")
-    logger.info("HiggsAudioTokenizer loaded successfully for ValidatingHiggsChatMLDataset.")
     
-    class ValidatingHiggsChatMLDataset(Dataset):
-        def __init__(self):
-            self.data = data
-            self.audio_tokenizer = audio_tokenizer
-        
-        def __len__(self):
-            return len(self.data)
-        
-        def __getitem__(self, idx) -> ChatMLDatasetSample:
-            """Load sample with on-the-fly audio tokenization."""
-            sample = self.data[idx]
-            
-            # Extract conversation data
-            conversations = sample.get("conversations", [])
-            
-            # Process messages to extract audio paths
-            messages = []
-            audio_paths = []
-            
-            for conv in conversations:
-                role = conv.get("from", "user")
-                content = conv.get("value", "")
-                
-                # Extract audio paths from content
-                if "ref_audio_path" in conv:
-                    ref_audio_path = conv["ref_audio_path"]
-                    audio_paths.append(("ref", ref_audio_path))
-                
-                if "tgt_audio_path" in conv:
-                    tgt_audio_path = conv["tgt_audio_path"]
-                    audio_paths.append(("tgt", tgt_audio_path))
-                    
-                messages.append({"role": role, "content": content})
-            
-            # Load and tokenize audio files
-            audio_codes = []
-            audio_waveforms = []
-            
-            for audio_type, audio_path in audio_paths:
-                if os.path.exists(audio_path):
-                    # Load audio waveform
-                    waveform, sample_rate = librosa.load(audio_path, sr=None)
-                    
-                    # Perform on-the-fly audio tokenization
-                    codes = self.audio_tokenizer.encode(waveform, sample_rate)
-                    
-                    audio_codes.extend(codes)
-                    audio_waveforms.append(waveform)
-                else:
-                    logger.warning(f"Audio file not found: {audio_path}")
-            
-            # Concatenate all audio codes and waveforms
-            if audio_codes:
-                audio_codes = torch.cat(audio_codes, dim=0) if len(audio_codes) > 1 else audio_codes[0]
-            else:
-                audio_codes = torch.empty(0, dtype=torch.long)
-                
-            if audio_waveforms:
-                audio_waveforms = torch.cat([torch.tensor(wv, dtype=torch.float32) for wv in audio_waveforms], dim=0)
-            else:
-                audio_waveforms = torch.empty(0, dtype=torch.float32)
-            
-            return ChatMLDatasetSample(
-                messages=messages,
-                audio_codes=audio_codes,
-                audio_waveforms=audio_waveforms
-            )
+    # Convert to HuggingFace Dataset format
+    # Just keep the original conversations structure for now
+    dataset_dict = {
+        "conversations": [sample.get("conversations", []) for sample in data]
+    }
     
-    return ValidatingHiggsChatMLDataset()
+    # Create HuggingFace Dataset
+    hf_dataset = HFDataset.from_dict(dataset_dict)
+    
+    logger.info("ValidatingHiggsChatMLDataset created as HuggingFace Dataset.")
+    return hf_dataset
 
 # Register the validating dataset
 register_dataset(DatasetMeta(
