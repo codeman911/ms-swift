@@ -64,7 +64,7 @@ swift sft \
     --gradient_checkpointing true \
     --save_steps 1000 \
     --logging_steps 20 \
-    --loss higgs_text_audio \
+    --loss_type higgs_text_audio \
     --output_dir ./output_higgs_lora_plugins \
     --logging_dir ./logs_higgs_lora_plugins \
     --report_to tensorboard \
