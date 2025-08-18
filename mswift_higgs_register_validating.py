@@ -230,7 +230,6 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
 # --- 2. Custom Template Class with Audio Data Collator ---
 
 from swift.llm.template.base import Template
-from swift.llm.template.register import TemplateMeta, register_template
 from typing import List, Dict, Any, Optional
 
 # Simple dataclass to replace ChatMLDatasetSample when higgs-audio not available
