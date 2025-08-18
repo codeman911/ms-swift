@@ -228,7 +228,7 @@ def get_validating_higgs_audio_model(model_dir: str,
 register_model(ModelMeta(
     model_type="higgs-audio-validating",
     model_groups=[
-        ModelGroup([Model("bosonai/higgs-audio-v2", "bosonai/higgs-audio-v2")])
+        ModelGroup([Model("bosonai/higgs-audio-v2-generation-3B-base", "bosonai/higgs-audio-v2")])
     ],
     template="higgs-chatml-validating",
     get_function=get_validating_higgs_audio_model,
