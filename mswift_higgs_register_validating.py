@@ -50,16 +50,18 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     
     logger.info(f"Loaded {len(data)} samples from {path}")
     
-    # Convert to HuggingFace Dataset format
-    # Just keep the original conversations structure for now
+    # Dataset already has 'messages' field in correct MS-SWIFT format
+    # Just pass it through directly
     dataset_dict = {
-        "conversations": [sample.get("conversations", []) for sample in data]
+        "messages": [sample.get("messages", []) for sample in data],
+        "speaker": [sample.get("speaker", None) for sample in data],
+        "start_index": [sample.get("start_index", 0) for sample in data],
     }
     
     # Create HuggingFace Dataset
     hf_dataset = HFDataset.from_dict(dataset_dict)
     
-    logger.info("ValidatingHiggsChatMLDataset created as HuggingFace Dataset.")
+    logger.info("ValidatingHiggsChatMLDataset created with messages field preserved.")
     return hf_dataset
 
 # Register the validating dataset
