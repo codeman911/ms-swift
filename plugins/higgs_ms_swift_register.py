@@ -112,14 +112,33 @@ try:
         # Patch HiggsAudioModel forward directly to handle labels
         original_forward = HiggsAudioModel.forward
         
+        # Define valid forward arguments for HiggsAudioModel
+        VALID_FORWARD_ARGS = {
+            'input_ids', 'inputs_embeds', 'attention_mask', 'audio_features',
+            'audio_feature_attention_mask', 'audio_in_ids', 'audio_in_ids_start',
+            'audio_out_ids', 'audio_out_ids_start', 'audio_out_ids_start_group_loc',
+            'label_ids', 'label_audio_ids', 'past_key_values', 'use_cache',
+            'output_attentions', 'output_hidden_states', 'output_audio_hidden_states',
+            'return_dict', 'cache_position', 'cache_audio_discrete_codes_mask',
+            'past_key_values_buckets', 'reward'
+        }
+        
         def wrapped_forward(self, labels=None, **kwargs):
-            """Forward that maps 'labels' to 'label_ids' for MS-SWIFT compatibility."""
+            """Forward that maps 'labels' to 'label_ids' and filters invalid args."""
             # Map labels to label_ids if present
             if labels is not None and 'label_ids' not in kwargs:
                 kwargs['label_ids'] = labels
             
-            # Call original forward
-            return original_forward(self, **kwargs)
+            # Filter out any unexpected arguments
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in VALID_FORWARD_ARGS}
+            
+            # Log if any args were filtered
+            filtered_out = set(kwargs.keys()) - set(filtered_kwargs.keys())
+            if filtered_out:
+                logger.debug(f"Filtered out unexpected forward args: {filtered_out}")
+            
+            # Call original forward with filtered arguments
+            return original_forward(self, **filtered_kwargs)
         
         # Replace the forward method
         HiggsAudioModel.forward = wrapped_forward
