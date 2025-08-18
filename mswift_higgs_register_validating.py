@@ -104,25 +104,25 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
             return " ".join(text_parts).strip()
         return str(content)
     
-    # Dual processing: normalized for dataset + text extracted for templates
+    # Process data for MS-SWIFT standard format
     normalized_data = []
     for sample in data:
         messages = sample.get("messages", [])
         
-        # Process messages with dual format
+        # Create standard MS-SWIFT messages format
         processed_messages = []
         for msg in messages:
             role = str(msg.get("role", "user"))
             content = msg.get("content", "")
             
-            # Normalize content for Arrow schema
+            # For MS-SWIFT: use extracted text as content, store normalized in separate field
+            text_content = extract_text_from_content(content)
             normalized_content = normalize_content(content)
             
-            # Add both normalized content and extracted text
             processed_msg = {
                 "role": role,
-                "content": normalized_content,
-                "text_content": extract_text_from_content(normalized_content)  # For template processing
+                "content": text_content,  # MS-SWIFT expects text content here
+                "normalized_content": normalized_content  # Store multimodal data separately
             }
             processed_messages.append(processed_msg)
         
@@ -132,19 +132,19 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
             "start_index": int(sample.get("start_index", 0))
         })
     
-    # Define bulletproof Features schema
+    # Define Features schema for MS-SWIFT standard format
     features = Features({
         "messages": Sequence({
             "role": Value("string"),
-            "content": Sequence({
+            "content": Value("string"),  # Text content for MS-SWIFT templates
+            "normalized_content": Sequence({
                 "type": Value("string"),
                 "text": Value("string"),
                 "audio_url": Value("string"),
                 "raw_audio": Value("string"),
                 "duration": Value("float64"),
                 "offset": Value("float64")
-            }),
-            "text_content": Value("string")
+            })
         }),
         "speaker": Value("string"),
         "start_index": Value("int64")
@@ -191,42 +191,9 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
         audio_stream_eos_id=audio_stream_eos_id,
     )
 
-# Custom template class to handle dual content format
-from swift.llm.template.base import Template
-
-class ValidatingHiggsChatMLTemplate(Template):
-    def _encode_messages(self, messages):
-        """Override to use text_content field for encoding."""
-        # Extract text from dual format messages
-        processed_messages = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            # Use extracted text_content instead of complex content structure
-            text_content = msg.get("text_content", "")
-            if not text_content and "content" in msg:
-                # Fallback extraction if text_content not available
-                content = msg["content"]
-                if isinstance(content, list):
-                    text_parts = []
-                    for item in content:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                    text_content = " ".join(text_parts).strip()
-                else:
-                    text_content = str(content)
-            
-            processed_messages.append({
-                "role": role,
-                "content": text_content
-            })
-        
-        # Use parent class encoding with processed messages
-        return super()._encode_messages(processed_messages)
-
-# Register template with custom class
+# Register standard template - MS-SWIFT will handle messages correctly
 register_template(TemplateMeta(
     template_type="higgs-chatml-validating",
-    template_cls=ValidatingHiggsChatMLTemplate,
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
