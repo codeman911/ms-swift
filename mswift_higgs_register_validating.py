@@ -168,7 +168,7 @@ from swift.llm.template.base import Template
 
 class ValidatingHiggsChatMLTemplate(Template):
     def __init__(self, tokenizer, system_prefix=None, *args, **kwargs):
-        super().__init__(template_type="higgs-chatml-validating", tokenizer=tokenizer, **kwargs)
+        super().__init__(tokenizer=tokenizer, **kwargs)
         self.system_prefix = system_prefix
     
     def _get_content_text(self, content):
