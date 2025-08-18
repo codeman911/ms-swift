@@ -47,7 +47,7 @@ swift sft \
     --use_hf true \
     --template higgs_chatml \
     --custom_register_path plugins/higgs_ms_swift_register.py plugins/loss.py plugins/higgs_dataset.py \
-    --dataset "higgs-chatml-custom#path=$DATASET_PATH" \
+    --dataset "higgs-chatml-custom" \
     --remove_unused_columns false \
     --streaming true \
     --train_type lora \
