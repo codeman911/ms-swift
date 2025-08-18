@@ -51,44 +51,29 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     logger.info(f"Loaded {len(data)} samples from {path}")
     
     def normalize_content(content, role):
-        """Normalize content for Arrow schema while preserving MS-SWIFT template compatibility."""
-        if role == "system":
-            # System messages should be strings for MS-SWIFT template
-            if isinstance(content, str):
-                return content
-            elif isinstance(content, list) and len(content) == 1 and content[0].get("type") == "text":
-                return content[0].get("text", "")
-            elif isinstance(content, list):
-                # Extract all text content for system message
-                text_parts = []
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        text_parts.append(item.get("text", ""))
-                return " ".join(text_parts) if text_parts else ""
-            else:
-                return str(content)
+        """Normalize ALL content to consistent list format for Arrow schema compatibility."""
+        # CRITICAL: ALL content must be list format to avoid Arrow type mixing
+        if isinstance(content, str):
+            return [{"type": "text", "text": content, "audio_url": "", "raw_audio": "", "duration": 0.0, "offset": 0.0}]
+        elif isinstance(content, list):
+            normalized_list = []
+            for item in content:
+                if isinstance(item, dict):
+                    # Ensure all required keys exist with consistent types
+                    normalized_item = {
+                        "type": str(item.get("type", "text")),
+                        "text": str(item.get("text", "")),
+                        "audio_url": str(item.get("audio_url", "")) if item.get("audio_url") is not None else "",
+                        "raw_audio": str(item.get("raw_audio", "")),
+                        "duration": float(item.get("duration", 0.0)) if item.get("duration") is not None else 0.0,
+                        "offset": float(item.get("offset", 0.0)) if item.get("offset") is not None else 0.0
+                    }
+                    normalized_list.append(normalized_item)
+                else:
+                    normalized_list.append({"type": "text", "text": str(item), "audio_url": "", "raw_audio": "", "duration": 0.0, "offset": 0.0})
+            return normalized_list
         else:
-            # User/assistant messages: normalize to consistent list format for multimodal
-            if isinstance(content, str):
-                return [{"type": "text", "text": content, "audio_url": None, "raw_audio": "", "duration": None, "offset": None}]
-            elif isinstance(content, list):
-                normalized_list = []
-                for item in content:
-                    if isinstance(item, dict):
-                        normalized_item = {
-                            "type": item.get("type", "text"),
-                            "text": item.get("text", ""),
-                            "audio_url": item.get("audio_url", None),
-                            "raw_audio": item.get("raw_audio", ""),
-                            "duration": item.get("duration", None),
-                            "offset": item.get("offset", None)
-                        }
-                        normalized_list.append(normalized_item)
-                    else:
-                        normalized_list.append({"type": "text", "text": str(item), "audio_url": None, "raw_audio": "", "duration": None, "offset": None})
-                return normalized_list
-            else:
-                return [{"type": "text", "text": str(content), "audio_url": None, "raw_audio": "", "duration": None, "offset": None}]
+            return [{"type": "text", "text": str(content), "audio_url": "", "raw_audio": "", "duration": 0.0, "offset": 0.0}]
     
     # Normalize messages to ensure consistent content structure
     normalized_messages = []
@@ -113,11 +98,29 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
             "start_index": sample.get("start_index", 0),
         })
     
-    # Create dataset without explicit schema to allow mixed content types
-    # System messages = strings, user/assistant messages = lists
-    hf_dataset = HFDataset.from_list(dataset_list)
+    # Define explicit Features schema with consistent types
+    from datasets import Features, Value, Sequence
     
-    logger.info("ValidatingHiggsChatMLDataset created with explicit Arrow schema.")
+    features = Features({
+        "messages": Sequence({
+            "role": Value("string"),
+            "content": Sequence({
+                "type": Value("string"),
+                "text": Value("string"),
+                "audio_url": Value("string"),
+                "raw_audio": Value("string"),
+                "duration": Value("float64"),
+                "offset": Value("float64")
+            })
+        }),
+        "speaker": Value("string"),
+        "start_index": Value("int64")
+    })
+    
+    # Create dataset with explicit schema to prevent Arrow type conflicts
+    hf_dataset = HFDataset.from_list(dataset_list, features=features)
+    
+    logger.info(f"ValidatingHiggsChatMLDataset created with {len(hf_dataset)} samples and consistent Arrow schema.")
     return hf_dataset
 
 # Register the validating dataset
