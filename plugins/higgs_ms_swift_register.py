@@ -489,6 +489,15 @@ class HiggsAudioCollator:
         print(f"[DEBUG] Ref audio shape: {padded_ref_codes.shape}")
         print(f"[DEBUG] Audio inputs shape: {audio_inputs.shape}")
 
+        # Create start indices for audio sequences
+        batch_size = len(features)
+        # Each sample has one audio sequence starting at index 0
+        audio_in_ids_start = torch.arange(batch_size, dtype=torch.long)
+        audio_out_ids_start = torch.arange(batch_size, dtype=torch.long)
+        
+        # Group locations - for single sequences, it's just [0]
+        audio_out_ids_start_group_loc = torch.zeros(1, dtype=torch.long)
+
         # Match HiggsAudioBatchInput format
         return {
             "input_ids": padded_input_ids,
@@ -496,10 +505,10 @@ class HiggsAudioCollator:
             "label_ids": text_labels,                  # text labels (shifted)
             "label_audio_ids": audio_labels,           # audio labels (masked)
             "audio_in_ids": audio_inputs,              # BOS + shifted target codes
-            "audio_in_ids_start": None,                # or proper indices if you support groups
+            "audio_in_ids_start": audio_in_ids_start,  # start indices for each audio sequence
             "audio_out_ids": padded_tgt_codes,         # raw target codes (unshifted)
-            "audio_out_ids_start": None,
-            "audio_out_ids_start_group_loc": None,
+            "audio_out_ids_start": audio_out_ids_start,# start indices for output audio
+            "audio_out_ids_start_group_loc": audio_out_ids_start_group_loc, # group locations
             "audio_features": padded_ref_codes,        # using ref codes as features for now
             "audio_feature_attention_mask": torch.ones(padded_ref_codes.shape[:2], dtype=torch.long),
             "reward": None
