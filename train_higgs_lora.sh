@@ -47,11 +47,11 @@ swift sft \
     --use_hf true \
     --template higgs_chatml \
     --custom_register_path plugins/higgs_ms_swift_register.py plugins/loss.py plugins/higgs_dataset.py \
-    --dataset "$DATASET_PATH" \
+    --dataset "higgs-chatml-custom#path=$DATASET_PATH" \
     --remove_unused_columns false \
     --streaming true \
     --train_type lora \
-    --target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
+    --target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj audio_mlp.gate_proj audio_mlp.up_proj audio_mlp.down_proj \
     --lora_rank 16 \
     --lora_alpha 32 \
     --lora_dropout 0.05 \
@@ -64,7 +64,7 @@ swift sft \
     --gradient_checkpointing true \
     --save_steps 1000 \
     --logging_steps 20 \
-    --loss_type higgs_text_audio \
+    --loss higgs_text_audio \
     --output_dir ./output_higgs_lora_plugins \
     --logging_dir ./logs_higgs_lora_plugins \
     --report_to tensorboard \

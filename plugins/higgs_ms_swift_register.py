@@ -160,62 +160,82 @@ class HiggsAudioCollator:
                         content = text_content
                     text_sequence += f"<|start_header_id|>assistant<|end_header_id|>\n\n{AUDIO_OUT_TOKEN} {content}<|eot_id|>"
             
-            # Tokenize the full conversation
-            tokenized = self.text_tokenizer(text_sequence, return_tensors='pt', add_special_tokens=False)
-            input_ids = tokenized.input_ids.squeeze(0)
-            all_input_ids.append(input_ids)
-
-        # --- 3. Padding --- 
-        # Pad text inputs
+            # Tokenize the text sequence
+            text_encoding = self._text_tok(
+                text_sequence,
+                padding=False,
+                truncation=True,
+                max_length=2048,
+                return_tensors="pt"
+            )
+            all_input_ids.append(text_encoding['input_ids'].squeeze(0))
+        
+        # --- 3. Text Tokenization & Padding ---
+        # Pad all sequences to same length
         padded_input_ids = torch.nn.utils.rnn.pad_sequence(
             all_input_ids, batch_first=True, padding_value=self.text_pad_id
         )
+        attention_mask = (padded_input_ids != self.text_pad_id).long()
         
-        # Pad audio codes (num_quantizers=8, seq_len)
-        padded_ref_codes = self._pad_audio(ref_audio_codes)
-        padded_tgt_codes = self._pad_audio(tgt_audio_codes)
-        
-        # --- 4. Create Labels with Teacher Forcing ---
-        # Text labels (standard next-token prediction)
+        # Text labels with proper +1 shift for causal LM
         text_labels = padded_input_ids.clone()
+        # Shift left by 1: labels[t] = input_ids[t+1], mask first position
+        text_labels[:, :-1] = padded_input_ids[:, 1:]
+        text_labels[:, -1] = -100
         text_labels[text_labels == self.text_pad_id] = -100
         
-        # Audio labels with teacher forcing and first-step masking
+        # --- 4. Audio Padding ---
+        padded_ref_codes, ref_lengths = self._pad_audio(ref_audio_codes)
+        padded_tgt_codes, tgt_lengths = self._pad_audio(tgt_audio_codes)
+        
+        # --- 5. Audio Teacher Forcing ---
         audio_inputs, audio_labels = self._prepare_audio_teacher_forcing(padded_tgt_codes)
         
-        # --- 5. Create Attention Masks ---
-        attention_mask = (padded_input_ids != self.text_pad_id).long()
-
+        # Mask padded positions in audio labels
+        B, C, T = audio_labels.shape
+        pad_mask = torch.arange(T).unsqueeze(0).unsqueeze(0).expand(B, C, T) >= tgt_lengths.view(B,1,1)
+        audio_labels[pad_mask] = -100
+        
         # --- 6. Logging for Debugging ---
         print(f"[DEBUG] Batch size: {batch_size}")
         print(f"[DEBUG] Text input shape: {padded_input_ids.shape}")
         print(f"[DEBUG] Ref audio shape: {padded_ref_codes.shape}")
         print(f"[DEBUG] Audio inputs shape: {audio_inputs.shape}")
 
+        # Match HiggsAudioBatchInput format
         return {
             "input_ids": padded_input_ids,
             "attention_mask": attention_mask,
-            "labels": text_labels,  # For text loss
-            "text_labels": text_labels,  # Explicit for custom loss
-            "audio_labels": audio_labels,  # For audio loss
-            "ref_audio_codes": padded_ref_codes,
-            "tgt_audio_codes_input": audio_inputs,
-            "tgt_audio_codes_labels": audio_labels,
+            "label_ids": text_labels,                  # text labels (shifted)
+            "label_audio_ids": audio_labels,           # audio labels (masked)
+            "audio_in_ids": audio_inputs,              # BOS + shifted target codes
+            "audio_in_ids_start": None,                # or proper indices if you support groups
+            "audio_out_ids": padded_tgt_codes,         # raw target codes (unshifted)
+            "audio_out_ids_start": None,
+            "audio_out_ids_start_group_loc": None,
+            "audio_features": padded_ref_codes,        # using ref codes as features for now
+            "audio_feature_attention_mask": torch.ones(padded_ref_codes.shape[:2], dtype=torch.long),
+            "reward": None
         }
 
-    def _pad_audio(self, audio_codes_list: List[torch.Tensor]) -> torch.Tensor:
+    def _pad_audio(self, audio_codes_list: List[torch.Tensor]) -> tuple:
         """Pads a list of audio code tensors to the same length."""
         if not audio_codes_list:
-            return torch.zeros((1, 8, 1), dtype=torch.long)
+            return torch.zeros((1, 8, 1), dtype=torch.long), torch.tensor([1], dtype=torch.long)
             
         max_len = max(c.shape[1] for c in audio_codes_list)
         num_quantizers = audio_codes_list[0].shape[0]
+        pad_val = 0  # neutral pad value
         padded_batch = torch.full((len(audio_codes_list), num_quantizers, max_len), 
-                                  self.audio_eos_id, dtype=torch.long)
-
+                                  pad_val, dtype=torch.long)
+        lengths = []
+        
         for i, codes in enumerate(audio_codes_list):
-            padded_batch[i, :, :codes.shape[1]] = codes
-        return padded_batch
+            T = codes.shape[1]
+            padded_batch[i, :, :T] = codes
+            lengths.append(T)
+            
+        return padded_batch, torch.tensor(lengths, dtype=torch.long)
 
     def _prepare_audio_teacher_forcing(self, audio_codes: torch.Tensor) -> tuple:
         """Prepare audio codes for teacher-forcing in the decoder."""
@@ -246,8 +266,8 @@ class HiggsChatMLTemplate(Template):
       - relies on remove_unused_columns=false so we see raw fields
     """
 
-    def __init__(self, template_meta, processor, **kwargs):
-        super().__init__(template_meta, processor, **kwargs)
+    def __init__(self, processor, template_meta, default_system=None, max_length=None, **kwargs):
+        super().__init__(processor, template_meta, default_system, max_length, **kwargs)
         self._text_tok = None
         self._audio_tok = None
         self._collator = None
@@ -307,7 +327,8 @@ class HiggsChatMLTemplate(Template):
 
 # ---- Register the template so `--template higgs_chatml` works ----
 register_template(
-    TemplateMeta(
+    name="higgs_chatml",
+    meta=TemplateMeta(
         template_type="higgs_chatml",
         prefix=[],  # No prefix needed for ChatML
         prompt=['<|im_start|>user\n{{QUERY}}<|im_end|>\n<|im_start|>assistant\n'],
