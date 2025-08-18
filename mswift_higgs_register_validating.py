@@ -43,7 +43,11 @@ class ValidatingHiggsChatMLDataset(Dataset):
         self.data = []
         with open(dataset_path, 'r', encoding='utf-8') as f:
             self.data = json.load(f)
+        
+        # Load the audio tokenizer for on-the-fly tokenization
+        self.audio_tokenizer = load_higgs_audio_tokenizer("bosonai/higgs-audio-v2-tokenizer", device="cpu")
         logger.info(f"ValidatingHiggsChatMLDataset loaded {len(self.data)} samples from {dataset_path}")
+        logger.info(f"Audio tokenizer loaded for on-the-fly tokenization")
 
     def __len__(self):
         return len(self.data)
@@ -91,14 +95,13 @@ class ValidatingHiggsChatMLDataset(Dataset):
         mock_input_ids = torch.arange(len(text_sequence.split()), dtype=torch.long)
         mock_label_ids = mock_input_ids.clone()
         
-        # Create mock audio codes (placeholder - real encoding happens in collator)
-        num_codebooks = 4  # Standard for Higgs Audio
-        mock_ref_codes = torch.randint(0, 1024, (num_codebooks, 100), dtype=torch.long)
-        mock_tgt_codes = torch.randint(0, 1024, (num_codebooks, 120), dtype=torch.long)
+        # Real audio tokenization using the loaded tokenizer
+        ref_codes = self.audio_tokenizer.encode(ref_wv, ref_sr)
+        tgt_codes = self.audio_tokenizer.encode(tgt_wv, tgt_sr)
         
         # Concatenate audio codes and track starts
-        audio_ids_concat = torch.cat([mock_ref_codes, mock_tgt_codes], dim=1)
-        audio_ids_start = torch.tensor([0, mock_ref_codes.shape[1]], dtype=torch.long)
+        audio_ids_concat = torch.cat([ref_codes, tgt_codes], dim=1)
+        audio_ids_start = torch.tensor([0, ref_codes.shape[1]], dtype=torch.long)
         
         # Concatenate waveforms and track starts
         ref_wv_tensor = torch.tensor(ref_wv, dtype=torch.float32)
