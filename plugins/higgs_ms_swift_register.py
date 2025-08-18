@@ -33,7 +33,22 @@ try:
         from transformers import AutoConfig, AutoModelForCausalLM
         AutoConfig.register("higgs_audio", HiggsAudioConfig)
         AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel)
+        
+        # Force override for the specific model we're using
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+        from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
+        CONFIG_MAPPING.update([("higgs_audio", HiggsAudioConfig)])
+        MODEL_FOR_CAUSAL_LM_MAPPING.update([(HiggsAudioConfig, HiggsAudioModel)])
+        
         print("[INFO] Successfully registered HiggsAudio model with transformers auto classes")
+        print(f"[INFO] HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
+        
+        # Verify the model has the required methods
+        if hasattr(HiggsAudioModel, 'get_input_embeddings'):
+            print("[INFO] ✓ HiggsAudioModel has get_input_embeddings method")
+        else:
+            print("[ERROR] ✗ HiggsAudioModel missing get_input_embeddings method")
+            
     except Exception as e:
         print(f"[WARNING] Failed to register HiggsAudio model: {e}")
         
