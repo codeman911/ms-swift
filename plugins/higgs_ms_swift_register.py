@@ -12,6 +12,32 @@ import os
 import importlib
 from typing import List, Dict, Any
 
+def register_higgs_audio():
+    """Register HiggsAudio model and configuration with MS-SWIFT."""
+    
+    try:
+        # Import model after patching
+        from higgs_audio.boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
+        from higgs_audio.boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
+        
+        logger.info("Loading HiggsAudio model classes...")
+        
+        # Register with transformers
+        AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
+        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
+        
+        # Force override for the specific model we're using
+        CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
+        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
+        
+        logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
+        logger.info(f"✓ HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
+        logger.info(f"✓ HiggsAudioModel has set_input_embeddings: {hasattr(HiggsAudioModel, 'set_input_embeddings')}")
+        logger.info(f"✓ HiggsAudioModel has enable_input_require_grads: {hasattr(HiggsAudioModel, 'enable_input_require_grads')}")
+        
+    except Exception as e:
+        print(f"[WARNING] Failed to register HiggsAudio model: {e}")
+
 # Setup logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,295 +61,283 @@ try:
     print("[INFO] Successfully imported Higgs Audio components")
     
     # Register HiggsAudio model with transformers auto classes
+    register_higgs_audio()
+    
+    # Hook into model loading to patch any dynamically loaded models
+    original_from_pretrained = AutoModelForCausalLM.from_pretrained
+    
+    def patched_from_pretrained(pretrained_model_name_or_path, *args, **kwargs):
+        """Wrapper to ensure HiggsAudio models have required methods."""
+        # CRITICAL: Patch HiggsAudioModel BEFORE loading
+        if 'higgs' in str(pretrained_model_name_or_path).lower():
+            logger.info(f"Pre-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
+            # Patch HiggsAudioModel BEFORE loading
+            def patch_higgs_audio_model():
+                """Comprehensively patch HiggsAudioModel class with required methods."""
+                
+                def get_input_embeddings(self) -> nn.Module:
+                    """Return the text embedding layer for gradient checkpointing."""
+                    return self.embed_tokens
+                
+                def set_input_embeddings(self, value: nn.Module):
+                    """Set the text embedding layer for gradient checkpointing."""
+                    self.embed_tokens = value
+                
+                def enable_input_require_grads(self):
+                    """Enable gradients for input embeddings (required for gradient checkpointing)."""
+                    def make_inputs_require_grad(module, input, output):
+                        if output is not None:
+                            for out in output if isinstance(output, tuple) else [output]:
+                                if torch.is_tensor(out) and out.dtype == torch.float:
+                                    out.requires_grad_(True)
+                    
+                    # Register forward hook on embeddings
+                    if hasattr(self, '_input_require_grads_hook'):
+                        self._input_require_grads_hook.remove()
+                    
+                    embeddings = self.get_input_embeddings()
+                    if embeddings is not None:
+                        self._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
+                
+                def disable_input_require_grads(self):
+                    """Disable gradients for input embeddings."""
+                    if hasattr(self, '_input_require_grads_hook'):
+                        self._input_require_grads_hook.remove()
+                        delattr(self, '_input_require_grads_hook')
+                
+                # Patch the imported HiggsAudioModel class
+                if not hasattr(HiggsAudioModel, 'get_input_embeddings'):
+                    logger.info("Patching HiggsAudioModel with get_input_embeddings method")
+                    HiggsAudioModel.get_input_embeddings = get_input_embeddings
+                
+                if not hasattr(HiggsAudioModel, 'set_input_embeddings'):
+                    logger.info("Patching HiggsAudioModel with set_input_embeddings method")
+                    HiggsAudioModel.set_input_embeddings = set_input_embeddings
+                
+                if not hasattr(HiggsAudioModel, 'enable_input_require_grads'):
+                    logger.info("Patching HiggsAudioModel with enable_input_require_grads method")
+                    HiggsAudioModel.enable_input_require_grads = enable_input_require_grads
+                
+                if not hasattr(HiggsAudioModel, 'disable_input_require_grads'):
+                    logger.info("Patching HiggsAudioModel with disable_input_require_grads method")
+                    HiggsAudioModel.disable_input_require_grads = disable_input_require_grads
+                
+                # Also patch in sys.modules if the module is already imported
+                for module_name in list(sys.modules.keys()):
+                    if 'higgs_audio' in module_name and 'modeling' in module_name:
+                        module = sys.modules[module_name]
+                        if hasattr(module, 'HiggsAudioModel'):
+                            model_class = getattr(module, 'HiggsAudioModel')
+                            if not hasattr(model_class, 'get_input_embeddings'):
+                                logger.info(f"Patching {module_name}.HiggsAudioModel")
+                                model_class.get_input_embeddings = get_input_embeddings
+                                model_class.set_input_embeddings = set_input_embeddings
+                                model_class.enable_input_require_grads = enable_input_require_grads
+                                model_class.disable_input_require_grads = disable_input_require_grads
+                
+                logger.info("✓ HiggsAudioModel patching complete for gradient checkpointing")
+            
+            patch_higgs_audio_model()
+        
+        model = original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        
+        # Double-check and patch the loaded instance if needed
+        if model.__class__.__name__ == 'HiggsAudioModel' or 'higgs' in str(pretrained_model_name_or_path).lower():
+            logger.info(f"Post-load verification for HiggsAudioModel")
+            
+            # Patch the class again to be sure
+            patch_higgs_audio_model()
+            
+            # Resize embeddings if we have a tokenizer with new tokens
+            if hasattr(model, 'config') and hasattr(model.config, 'vocab_size'):
+                # Check if tokenizer was passed
+                tokenizer = kwargs.get('tokenizer', None)
+                if tokenizer and hasattr(tokenizer, 'vocab_size'):
+                    if tokenizer.vocab_size > model.config.vocab_size:
+                        logger.info(f"Resizing model embeddings from {model.config.vocab_size} to {tokenizer.vocab_size}")
+                        model.resize_token_embeddings(tokenizer.vocab_size)
+                        model.config.vocab_size = tokenizer.vocab_size
+            
+            # Also patch the instance directly if needed
+            if not hasattr(model, 'get_input_embeddings'):
+                logger.info("Patching model instance with embedding methods")
+                model.get_input_embeddings = lambda: model.embed_tokens
+                model.set_input_embeddings = lambda v: setattr(model, 'embed_tokens', v)
+                
+                # Add enable_input_require_grads to instance
+                def instance_enable_input_require_grads():
+                    def make_inputs_require_grad(module, input, output):
+                        if output is not None:
+                            for out in output if isinstance(output, tuple) else [output]:
+                                if torch.is_tensor(out) and out.dtype == torch.float:
+                                    out.requires_grad_(True)
+                    
+                    if hasattr(model, '_input_require_grads_hook'):
+                        model._input_require_grads_hook.remove()
+                    
+                    embeddings = model.embed_tokens
+                    if embeddings is not None:
+                        model._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
+                
+                model.enable_input_require_grads = instance_enable_input_require_grads
+        
+        return model
+    
+    # Replace the from_pretrained method
+    AutoModelForCausalLM.from_pretrained = patched_from_pretrained
+    logger.info("✓ Hooked into AutoModelForCausalLM.from_pretrained for dynamic patching")
+    
+    # === CRITICAL: Patch PEFT wrapper classes ===
+    # When using LoRA, the model gets wrapped with PeftModelForCausalLM
+    # We need to ensure the PEFT wrapper delegates embedding methods to base model
     try:
-        from transformers import AutoConfig, AutoModelForCausalLM
+        from peft import PeftModel, PeftModelForCausalLM
         
-        # ==== CRITICAL GRADIENT CHECKPOINTING FIX ====
-        # Patch ALL possible HiggsAudioModel class references to ensure gradient checkpointing works
-
-        def patch_higgs_audio_model():
-            """Comprehensively patch HiggsAudioModel class with required methods."""
-            
-            def get_input_embeddings(self) -> nn.Module:
-                """Return the text embedding layer for gradient checkpointing."""
-                return self.embed_tokens
-            
-            def set_input_embeddings(self, value: nn.Module):
-                """Set the text embedding layer for gradient checkpointing."""
-                self.embed_tokens = value
-            
-            def enable_input_require_grads(self):
-                """Enable gradients for input embeddings (required for gradient checkpointing)."""
-                def make_inputs_require_grad(module, input, output):
-                    if output is not None:
-                        for out in output if isinstance(output, tuple) else [output]:
-                            if torch.is_tensor(out) and out.dtype == torch.float:
-                                out.requires_grad_(True)
+        # Store original methods if they exist
+        orig_peft_get_input = getattr(PeftModelForCausalLM, 'get_input_embeddings', None)
+        orig_peft_set_input = getattr(PeftModelForCausalLM, 'set_input_embeddings', None)
+        
+        def peft_get_input_embeddings(self) -> nn.Module:
+            """Get input embeddings from the base model."""
+            # Try base_model first (PEFT structure)
+            if hasattr(self, 'base_model'):
+                base = self.base_model
+                if hasattr(base, 'model'):
+                    base = base.model
                 
-                # Register forward hook on embeddings
-                if hasattr(self, '_input_require_grads_hook'):
-                    self._input_require_grads_hook.remove()
+                # CRITICAL: Check for embed_tokens FIRST before trying get_input_embeddings
+                # This avoids NotImplementedError from HiggsAudioModel
+                if hasattr(base, 'embed_tokens'):
+                    return base.embed_tokens
                 
-                embeddings = self.get_input_embeddings()
-                if embeddings is not None:
-                    self._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
-            
-            def disable_input_require_grads(self):
-                """Disable gradients for input embeddings."""
-                if hasattr(self, '_input_require_grads_hook'):
-                    self._input_require_grads_hook.remove()
-                    delattr(self, '_input_require_grads_hook')
-            
-            # Patch the imported HiggsAudioModel class
-            if not hasattr(HiggsAudioModel, 'get_input_embeddings'):
-                logger.info("Patching HiggsAudioModel with get_input_embeddings method")
-                HiggsAudioModel.get_input_embeddings = get_input_embeddings
-            
-            if not hasattr(HiggsAudioModel, 'set_input_embeddings'):
-                logger.info("Patching HiggsAudioModel with set_input_embeddings method")
-                HiggsAudioModel.set_input_embeddings = set_input_embeddings
-            
-            if not hasattr(HiggsAudioModel, 'enable_input_require_grads'):
-                logger.info("Patching HiggsAudioModel with enable_input_require_grads method")
-                HiggsAudioModel.enable_input_require_grads = enable_input_require_grads
-            
-            if not hasattr(HiggsAudioModel, 'disable_input_require_grads'):
-                logger.info("Patching HiggsAudioModel with disable_input_require_grads method")
-                HiggsAudioModel.disable_input_require_grads = disable_input_require_grads
-            
-            # Also patch in sys.modules if the module is already imported
-            for module_name in list(sys.modules.keys()):
-                if 'higgs_audio' in module_name and 'modeling' in module_name:
-                    module = sys.modules[module_name]
-                    if hasattr(module, 'HiggsAudioModel'):
-                        model_class = getattr(module, 'HiggsAudioModel')
-                        if not hasattr(model_class, 'get_input_embeddings'):
-                            logger.info(f"Patching {module_name}.HiggsAudioModel")
-                            model_class.get_input_embeddings = get_input_embeddings
-                            model_class.set_input_embeddings = set_input_embeddings
-                            model_class.enable_input_require_grads = enable_input_require_grads
-                            model_class.disable_input_require_grads = disable_input_require_grads
-            
-            logger.info("✓ HiggsAudioModel patching complete for gradient checkpointing")
-
-        # Apply the patches immediately
-        patch_higgs_audio_model()
-        
-        # Patch HiggsAudioModel forward directly to handle labels
-        original_forward = HiggsAudioModel.forward
-        
-        # Define valid forward arguments for HiggsAudioModel
-        VALID_FORWARD_ARGS = {
-            'input_ids', 'inputs_embeds', 'attention_mask', 'audio_features',
-            'audio_feature_attention_mask', 'audio_in_ids', 'audio_in_ids_start',
-            'audio_out_ids', 'audio_out_ids_start', 'audio_out_ids_start_group_loc',
-            'label_ids', 'label_audio_ids', 'past_key_values', 'use_cache',
-            'output_attentions', 'output_hidden_states', 'output_audio_hidden_states',
-            'return_dict', 'cache_position', 'cache_audio_discrete_codes_mask',
-            'past_key_values_buckets', 'reward'
-        }
-        
-        def wrapped_forward(self, labels=None, **kwargs):
-            """Forward that maps 'labels' to 'label_ids' and filters invalid args."""
-            # Map labels to label_ids if present
-            if labels is not None and 'label_ids' not in kwargs:
-                kwargs['label_ids'] = labels
-            
-            # Filter out any unexpected arguments
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in VALID_FORWARD_ARGS}
-            
-            # Log if any args were filtered
-            filtered_out = set(kwargs.keys()) - set(filtered_kwargs.keys())
-            if filtered_out:
-                logger.debug(f"Filtered out unexpected forward args: {filtered_out}")
-            
-            # Call original forward with filtered arguments
-            return original_forward(self, **filtered_kwargs)
-        
-        # Replace the forward method
-        HiggsAudioModel.forward = wrapped_forward
-        logger.info("✓ Patched HiggsAudioModel.forward to handle labels -> label_ids mapping")
-        
-        # Register with transformers
-        AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
-        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
-        
-        # Force override for the specific model we're using
-        CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
-        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
-        
-        logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
-        logger.info(f"✓ HiggsAudioModel has get_input_embeddings: {hasattr(HiggsAudioModel, 'get_input_embeddings')}")
-        logger.info(f"✓ HiggsAudioModel has set_input_embeddings: {hasattr(HiggsAudioModel, 'set_input_embeddings')}")
-        logger.info(f"✓ HiggsAudioModel has enable_input_require_grads: {hasattr(HiggsAudioModel, 'enable_input_require_grads')}")
-        
-        # Hook into model loading to patch any dynamically loaded models
-        original_from_pretrained = AutoModelForCausalLM.from_pretrained
-        
-        def patched_from_pretrained(pretrained_model_name_or_path, *args, **kwargs):
-            """Wrapper to ensure HiggsAudio models have required methods."""
-            # CRITICAL: Patch HiggsAudioModel BEFORE loading
-            if 'higgs' in str(pretrained_model_name_or_path).lower():
-                logger.info(f"Pre-load patching for HiggsAudioModel from {pretrained_model_name_or_path}")
-                patch_higgs_audio_model()
-            
-            model = original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-            
-            # Double-check and patch the loaded instance if needed
-            if model.__class__.__name__ == 'HiggsAudioModel' or 'higgs' in str(pretrained_model_name_or_path).lower():
-                logger.info(f"Post-load verification for HiggsAudioModel")
+                # Try to find embed_tokens in model attributes
+                for attr_name in ['model', 'language_model', 'transformer']:
+                    if hasattr(base, attr_name):
+                        sub_model = getattr(base, attr_name)
+                        if hasattr(sub_model, 'embed_tokens'):
+                            return sub_model.embed_tokens
                 
-                # Patch the class again to be sure
-                patch_higgs_audio_model()
-                
-                # Also patch the instance directly if needed
-                if not hasattr(model, 'get_input_embeddings'):
-                    logger.info("Patching model instance with embedding methods")
-                    model.get_input_embeddings = lambda: model.embed_tokens
-                    model.set_input_embeddings = lambda v: setattr(model, 'embed_tokens', v)
-                    
-                    # Add enable_input_require_grads to instance
-                    def instance_enable_input_require_grads():
-                        def make_inputs_require_grad(module, input, output):
-                            if output is not None:
-                                for out in output if isinstance(output, tuple) else [output]:
-                                    if torch.is_tensor(out) and out.dtype == torch.float:
-                                        out.requires_grad_(True)
-                        
-                        if hasattr(model, '_input_require_grads_hook'):
-                            model._input_require_grads_hook.remove()
-                        
-                        embeddings = model.embed_tokens
-                        if embeddings is not None:
-                            model._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
-                    
-                    model.enable_input_require_grads = instance_enable_input_require_grads
-            
-            return model
-        
-        # Replace the from_pretrained method
-        AutoModelForCausalLM.from_pretrained = patched_from_pretrained
-        logger.info("✓ Hooked into AutoModelForCausalLM.from_pretrained for dynamic patching")
-        
-        # === CRITICAL: Patch PEFT wrapper classes ===
-        # When using LoRA, the model gets wrapped with PeftModelForCausalLM
-        # We need to ensure the PEFT wrapper delegates embedding methods to base model
-        try:
-            from peft import PeftModel, PeftModelForCausalLM
-            
-            # Store original methods if they exist
-            orig_peft_get_input = getattr(PeftModelForCausalLM, 'get_input_embeddings', None)
-            orig_peft_set_input = getattr(PeftModelForCausalLM, 'set_input_embeddings', None)
-            
-            def peft_get_input_embeddings(self) -> nn.Module:
-                """Get input embeddings from the base model."""
-                # Try base_model first (PEFT structure)
-                if hasattr(self, 'base_model'):
-                    base = self.base_model
-                    if hasattr(base, 'model'):
-                        base = base.model
-                    
-                    # CRITICAL: Check for embed_tokens FIRST before trying get_input_embeddings
-                    # This avoids NotImplementedError from HiggsAudioModel
-                    if hasattr(base, 'embed_tokens'):
-                        return base.embed_tokens
-                    
-                    # Try to find embed_tokens in model attributes
-                    for attr_name in ['model', 'language_model', 'transformer']:
-                        if hasattr(base, attr_name):
-                            sub_model = getattr(base, attr_name)
-                            if hasattr(sub_model, 'embed_tokens'):
-                                return sub_model.embed_tokens
-                    
-                    # Only try get_input_embeddings as last resort
-                    if hasattr(base, 'get_input_embeddings'):
-                        try:
-                            result = base.get_input_embeddings()
-                            if result is not None:
-                                return result
-                        except NotImplementedError:
-                            pass
-                
-                # Fallback to original if it exists
-                if orig_peft_get_input:
+                # Only try get_input_embeddings as last resort
+                if hasattr(base, 'get_input_embeddings'):
                     try:
-                        return orig_peft_get_input(self)
-                    except:
+                        result = base.get_input_embeddings()
+                        if result is not None:
+                            return result
+                    except NotImplementedError:
+                        pass
+            
+            # Fallback to original if it exists
+            if orig_peft_get_input:
+                try:
+                    return orig_peft_get_input(self)
+                except:
+                    pass
+            
+            raise NotImplementedError(f"Could not find input embeddings in PEFT model. Model type: {type(self)}, Base model type: {type(self.base_model) if hasattr(self, 'base_model') else 'No base_model'}")
+        
+        def peft_set_input_embeddings(self, value: nn.Module):
+            """Set input embeddings in the base model."""
+            # Try base_model first (PEFT structure)
+            if hasattr(self, 'base_model'):
+                base = self.base_model
+                if hasattr(base, 'model'):
+                    base = base.model
+                
+                # Try set_input_embeddings method first
+                if hasattr(base, 'set_input_embeddings') and not isinstance(getattr(base, 'set_input_embeddings'), type(lambda: None)):
+                    try:
+                        base.set_input_embeddings(value)
+                        return
+                    except NotImplementedError:
                         pass
                 
-                raise NotImplementedError(f"Could not find input embeddings in PEFT model. Model type: {type(self)}, Base model type: {type(self.base_model) if hasattr(self, 'base_model') else 'No base_model'}")
-            
-            def peft_set_input_embeddings(self, value: nn.Module):
-                """Set input embeddings in the base model."""
-                # Try base_model first (PEFT structure)
-                if hasattr(self, 'base_model'):
-                    base = self.base_model
-                    if hasattr(base, 'model'):
-                        base = base.model
-                    
-                    # Try set_input_embeddings method first
-                    if hasattr(base, 'set_input_embeddings') and not isinstance(getattr(base, 'set_input_embeddings'), type(lambda: None)):
-                        try:
-                            base.set_input_embeddings(value)
-                            return
-                        except NotImplementedError:
-                            pass
-                    
-                    # Fallback to direct assignment
-                    if hasattr(base, 'embed_tokens'):
-                        base.embed_tokens = value
-                        return
-                    
-                    # Try to find embed_tokens in model attributes
-                    for attr_name in ['model', 'language_model', 'transformer']:
-                        if hasattr(base, attr_name):
-                            sub_model = getattr(base, attr_name)
-                            if hasattr(sub_model, 'embed_tokens'):
-                                sub_model.embed_tokens = value
-                                return
-                
-                # Fallback to original if it exists
-                if orig_peft_set_input:
-                    orig_peft_set_input(self, value)
+                # Fallback to direct assignment
+                if hasattr(base, 'embed_tokens'):
+                    base.embed_tokens = value
                     return
                 
-                raise NotImplementedError("Could not set input embeddings in PEFT model")
+                # Try to find embed_tokens in model attributes
+                for attr_name in ['model', 'language_model', 'transformer']:
+                    if hasattr(base, attr_name):
+                        sub_model = getattr(base, attr_name)
+                        if hasattr(sub_model, 'embed_tokens'):
+                            sub_model.embed_tokens = value
+                            return
             
-            def peft_enable_input_require_grads(self):
-                """Enable input require grads for PEFT model."""
-                def make_inputs_require_grad(module, input, output):
-                    if output is not None:
-                        for out in output if isinstance(output, tuple) else [output]:
-                            if torch.is_tensor(out) and out.dtype == torch.float:
-                                out.requires_grad_(True)
-                
-                if hasattr(self, '_input_require_grads_hook'):
-                    self._input_require_grads_hook.remove()
-                
-                embeddings = self.get_input_embeddings()
-                if embeddings is not None:
-                    self._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
+            # Fallback to original if it exists
+            if orig_peft_set_input:
+                orig_peft_set_input(self, value)
+                return
             
-            # Apply patches to PEFT classes
-            PeftModelForCausalLM.get_input_embeddings = peft_get_input_embeddings
-            PeftModelForCausalLM.set_input_embeddings = peft_set_input_embeddings
-            PeftModelForCausalLM.enable_input_require_grads = peft_enable_input_require_grads
-            
-            # Also patch base PeftModel class
-            PeftModel.get_input_embeddings = peft_get_input_embeddings
-            PeftModel.set_input_embeddings = peft_set_input_embeddings
-            PeftModel.enable_input_require_grads = peft_enable_input_require_grads
-            
-            logger.info("✓ Patched PEFT model classes for gradient checkpointing compatibility")
-            
-        except ImportError:
-            logger.info("PEFT not installed, skipping PEFT model patches")
-        except Exception as e:
-            logger.warning(f"Failed to patch PEFT models: {e}")
-            
-    except Exception as e:
-        print(f"[WARNING] Failed to register HiggsAudio model: {e}")
+            raise NotImplementedError("Could not set input embeddings in PEFT model")
         
+        def peft_enable_input_require_grads(self):
+            """Enable input require grads for PEFT model."""
+            def make_inputs_require_grad(module, input, output):
+                if output is not None:
+                    for out in output if isinstance(output, tuple) else [output]:
+                        if torch.is_tensor(out) and out.dtype == torch.float:
+                            out.requires_grad_(True)
+            
+            if hasattr(self, '_input_require_grads_hook'):
+                self._input_require_grads_hook.remove()
+            
+            embeddings = self.get_input_embeddings()
+            if embeddings is not None:
+                self._input_require_grads_hook = embeddings.register_forward_hook(make_inputs_require_grad)
+        
+        # Apply patches to PEFT classes
+        PeftModelForCausalLM.get_input_embeddings = peft_get_input_embeddings
+        PeftModelForCausalLM.set_input_embeddings = peft_set_input_embeddings
+        PeftModelForCausalLM.enable_input_require_grads = peft_enable_input_require_grads
+        
+        # Also patch base PeftModel class
+        PeftModel.get_input_embeddings = peft_get_input_embeddings
+        PeftModel.set_input_embeddings = peft_set_input_embeddings
+        PeftModel.enable_input_require_grads = peft_enable_input_require_grads
+        
+        logger.info("✓ Patched PEFT model classes for gradient checkpointing compatibility")
+        
+    except ImportError:
+        logger.info("PEFT not installed, skipping PEFT model patches")
+    except Exception as e:
+        logger.warning(f"Failed to patch PEFT models: {e}")
+    
+    # Patch HiggsAudioModel forward directly to handle labels
+    original_forward = HiggsAudioModel.forward
+    
+    # Define valid forward arguments for HiggsAudioModel
+    VALID_FORWARD_ARGS = {
+        'input_ids', 'inputs_embeds', 'attention_mask', 'audio_features',
+        'audio_feature_attention_mask', 'audio_in_ids', 'audio_in_ids_start',
+        'audio_out_ids', 'audio_out_ids_start', 'audio_out_ids_start_group_loc',
+        'label_ids', 'label_audio_ids', 'past_key_values', 'use_cache',
+        'output_attentions', 'output_hidden_states', 'output_audio_hidden_states',
+        'return_dict', 'cache_position', 'cache_audio_discrete_codes_mask',
+        'past_key_values_buckets', 'reward'
+    }
+    
+    def wrapped_forward(self, labels=None, **kwargs):
+        """Forward that maps 'labels' to 'label_ids' and filters invalid args."""
+        # Map labels to label_ids if present
+        if labels is not None and 'label_ids' not in kwargs:
+            kwargs['label_ids'] = labels
+        
+        # Filter out any unexpected arguments
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in VALID_FORWARD_ARGS}
+        
+        # Log if any args were filtered
+        filtered_out = set(kwargs.keys()) - set(filtered_kwargs.keys())
+        if filtered_out:
+            logger.debug(f"Filtered out unexpected forward args: {filtered_out}")
+        
+        # Call original forward with filtered arguments
+        return original_forward(self, **filtered_kwargs)
+    
+    # Replace the forward method
+    HiggsAudioModel.forward = wrapped_forward
+    logger.info("✓ Patched HiggsAudioModel.forward to handle labels -> label_ids mapping")
+    
 except ImportError as e:
     print(f"[ERROR] Failed to import Higgs Audio components: {e}")
     # Fallback imports - create minimal stubs
@@ -349,18 +363,35 @@ except ImportError as e:
     AUDIO_OUT_TOKEN = "<|AUDIO_OUT|>"
 
 class HiggsAudioCollator:
-    """A custom data collator for on-the-fly Higgs Audio tokenization."""
+    """Data collator for HiggsAudio that handles both text and audio."""
     
-    def __init__(self, text_tokenizer, audio_tokenizer, 
-                 shift_teacher_forcing=True, mask_first_audio_step=True, 
-                 mask_eos_in_audio=False, min_text_tokens=32, text_weight=1.0):
+    def __init__(self, text_tokenizer, audio_tokenizer, mask_first_audio_step=True, 
+                 mask_eos_in_audio=False, min_text_tokens=50, text_weight=1.0, **kwargs):
         self.text_tokenizer = text_tokenizer
         self.audio_tokenizer = audio_tokenizer
-        self.shift_teacher_forcing = shift_teacher_forcing
         self.mask_first_audio_step = mask_first_audio_step
         self.mask_eos_in_audio = mask_eos_in_audio
         self.min_text_tokens = min_text_tokens
         self.text_weight = text_weight
+        
+        # Add audio tokens to tokenizer if not present
+        special_tokens_added = False
+        if AUDIO_IN_TOKEN not in text_tokenizer.get_vocab():
+            text_tokenizer.add_tokens([AUDIO_IN_TOKEN], special_tokens=True)
+            special_tokens_added = True
+        if AUDIO_OUT_TOKEN not in text_tokenizer.get_vocab():
+            text_tokenizer.add_tokens([AUDIO_OUT_TOKEN], special_tokens=True)
+            special_tokens_added = True
+        
+        if special_tokens_added:
+            print(f"[INFO] Added audio special tokens to tokenizer")
+            # Update tokenizer vocab size
+            print(f"[INFO] Tokenizer vocab size after adding special tokens: {len(text_tokenizer)}")
+        
+        # Get audio token IDs
+        self.audio_in_token_id = text_tokenizer.convert_tokens_to_ids(AUDIO_IN_TOKEN)
+        self.audio_out_token_id = text_tokenizer.convert_tokens_to_ids(AUDIO_OUT_TOKEN)
+        print(f"[INFO] Audio token IDs - IN: {self.audio_in_token_id}, OUT: {self.audio_out_token_id}")
         
         # Get special token IDs
         self.text_bos_id = text_tokenizer.bos_token_id or text_tokenizer.eos_token_id
@@ -436,6 +467,7 @@ class HiggsAudioCollator:
                             if isinstance(item, dict) and item.get("type") == "text":
                                 text_content += item.get("text", "")
                         content = text_content
+                    # Use audio token in text
                     text_sequence += f"<|start_header_id|>user<|end_header_id|>\n\n{AUDIO_IN_TOKEN} {content}<|eot_id|>"
                 elif role == "assistant":
                     # Extract text content for TTS
@@ -445,7 +477,13 @@ class HiggsAudioCollator:
                             if isinstance(item, dict) and item.get("type") == "text":
                                 text_content += item.get("text", "")
                         content = text_content
+                    # Use audio token in text
                     text_sequence += f"<|start_header_id|>assistant<|end_header_id|>\n\n{AUDIO_OUT_TOKEN} {content}<|eot_id|>"
+            
+            # Debug: print text before tokenization
+            if not text_sequence:
+                print(f"[WARNING] Empty text sequence for sample")
+                text_sequence = f"<|begin_of_text|>{AUDIO_IN_TOKEN} Hello {AUDIO_OUT_TOKEN} Hi<|eot_id|>"  # Default text
             
             # Tokenize the text sequence
             text_encoding = self.text_tokenizer(
@@ -455,7 +493,14 @@ class HiggsAudioCollator:
                 max_length=2048,
                 return_tensors="pt"
             )
-            all_input_ids.append(text_encoding['input_ids'].squeeze(0))
+            tokens = text_encoding['input_ids'].squeeze(0)
+            
+            # Debug token count
+            if len(tokens) < 5:
+                print(f"[WARNING] Very few tokens ({len(tokens)}) from text: {text_sequence[:100]}...")
+                print(f"[DEBUG] Token IDs: {tokens}")
+            
+            all_input_ids.append(tokens)
         
         # --- 3. Text Tokenization & Padding ---
         # Pad all sequences to same length
