@@ -3,17 +3,38 @@
 
 import torch
 import torch.nn as nn
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-from transformers.models.auto import CONFIG_MAPPING, MODEL_FOR_CAUSAL_LM_MAPPING
 import logging
 import sys
 import os
-import importlib
 from typing import List, Dict, Any
 import numpy as np
-from swift.utils import get_logger
 
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers.models.auto import CONFIG_MAPPING, MODEL_FOR_CAUSAL_LM_MAPPING
+from swift.utils import get_logger
+from swift.llm import register_template, TemplateMeta
+
+# Setup logging
 logger = get_logger()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Add the higgs-audio directory to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'higgs-audio'))
+
+# === Import HiggsAudio components ===
+try:
+    from boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
+    from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
+    HIGGS_AUDIO_AVAILABLE = True
+    logger.info("✓ HiggsAudio components imported successfully")
+except ImportError as e:
+    logger.warning(f"HiggsAudio components not available: {e}")
+    HIGGS_AUDIO_AVAILABLE = False
+    # Create dummy classes
+    class HiggsAudioConfig:
+        pass
+    class HiggsAudioModel:
+        pass
 
 # === PEFT Gradient Checkpointing Fix ===
 try:
@@ -29,7 +50,7 @@ try:
                 emb = mod.get_input_embeddings()
                 if emb is not None:
                     return emb
-            except NotImplementedError:
+            except (NotImplementedError, AttributeError):
                 pass
         # Walk common attribute paths
         paths = [
@@ -252,49 +273,28 @@ def register_higgs_audio():
     )
     
     logger.info("✓ Registered higgs_chatml template with on-the-fly collator")
-    AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
-        
-    # Force override for the specific model we're using
-    if hasattr(CONFIG_MAPPING, '_extra_content'):
-        CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
-    if hasattr(MODEL_FOR_CAUSAL_LM_MAPPING, '_extra_content'):
-        MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
-        
-    logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
-    return True
-        
-except Exception as e:
-    logger.error(f"Failed to register HiggsAudio model: {e}")
-    return False
-
-# Setup logging
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Add the higgs-audio directory to the Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'higgs-audio'))
-
-# Import the HiggsAudioConfig and HiggsAudioModel from the local higgs-audio directory
-from boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
-from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
-
-# IMMEDIATELY register HiggsAudio with transformers
-AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
-AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
-logger.info("✓ Registered HiggsAudio model with transformers on module import")
-
-# Register custom template
-from swift.llm import register_template, TemplateMeta, Template
-
-# ---- import Higgs Audio code with correct paths ----
-try:
-    from boson_multimodal.data_collator.higgs_audio_collator import HiggsAudioSampleCollator
-    from boson_multimodal.audio_processing.higgs_audio_tokenizer import HiggsAudioTokenizer
-    from boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
-    from boson_multimodal.constants import AUDIO_IN_TOKEN, AUDIO_OUT_TOKEN
-    print("[INFO] Successfully imported Higgs Audio components")
     
-    # Hook into model loading to patch any dynamically loaded models
+    # Register HiggsAudio model with transformers if available
+    if HIGGS_AUDIO_AVAILABLE:
+        try:
+            AutoConfig.register("higgs_audio", HiggsAudioConfig, exist_ok=True)
+            AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel, exist_ok=True)
+            
+            # Force override for the specific model we're using
+            if hasattr(CONFIG_MAPPING, '_extra_content'):
+                CONFIG_MAPPING._extra_content["higgs_audio"] = HiggsAudioConfig
+            if hasattr(MODEL_FOR_CAUSAL_LM_MAPPING, '_extra_content'):
+                MODEL_FOR_CAUSAL_LM_MAPPING._extra_content[HiggsAudioConfig] = HiggsAudioModel
+            
+            logger.info("✓ Successfully registered HiggsAudio model with transformers auto classes")
+        except Exception as e:
+            logger.error(f"Failed to register HiggsAudio model: {e}")
+
+# === Execute registration on module import ===
+register_higgs_audio()
+    
+# === Hook into model loading to patch dynamically loaded models ===
+if HIGGS_AUDIO_AVAILABLE:
     original_from_pretrained = AutoModelForCausalLM.from_pretrained
     
     def patched_from_pretrained(pretrained_model_name_or_path, *args, **kwargs):
@@ -422,10 +422,10 @@ try:
     AutoModelForCausalLM.from_pretrained = patched_from_pretrained
     logger.info("✓ Hooked into AutoModelForCausalLM.from_pretrained for dynamic patching")
     
-    # === CRITICAL: Patch PEFT wrapper classes ===
-    # When using LoRA, the model gets wrapped with PeftModelForCausalLM
-    # We need to ensure the PEFT wrapper delegates embedding methods to base model
-    try:
+# === CRITICAL: Patch PEFT wrapper classes ===
+# When using LoRA, the model gets wrapped with PeftModelForCausalLM
+# We need to ensure the PEFT wrapper delegates embedding methods to base model
+try:
         from peft import PeftModel, PeftModelForCausalLM
         
         # Store original methods if they exist
@@ -531,14 +531,15 @@ try:
         PeftModel.set_input_embeddings = peft_set_input_embeddings
         PeftModel.enable_input_require_grads = peft_enable_input_require_grads
         
-        logger.info("✓ Patched PEFT model classes for gradient checkpointing compatibility")
-        
-    except ImportError:
-        logger.info("PEFT not installed, skipping PEFT model patches")
-    except Exception as e:
-        logger.warning(f"Failed to patch PEFT models: {e}")
+    logger.info("✓ Patched PEFT model classes for gradient checkpointing compatibility")
     
-    # Patch HiggsAudioModel forward directly to handle labels
+except ImportError:
+    logger.info("PEFT not installed, skipping PEFT model patches")
+except Exception as e:
+    logger.warning(f"Failed to patch PEFT models: {e}")
+    
+# === Patch HiggsAudioModel forward directly to handle labels ===
+if HIGGS_AUDIO_AVAILABLE:
     original_forward = HiggsAudioModel.forward
     
     # Define valid forward arguments for HiggsAudioModel
@@ -572,84 +573,15 @@ try:
     # Replace the forward method
     HiggsAudioModel.forward = wrapped_forward
     logger.info("✓ Patched HiggsAudioModel.forward to handle labels -> label_ids mapping")
-    
-except ImportError as e:
-    print(f"[ERROR] Failed to import Higgs Audio components: {e}")
-    # Fallback imports - create minimal stubs
-    class HiggsAudioSampleCollator:
-        def __init__(self, *args, **kwargs):
-            pass
-        def __call__(self, batch):
-            return {}
-    
-    class HiggsAudioTokenizer:
-        @classmethod
-        def from_pretrained(cls, *args, **kwargs):
-            return cls()
-        def encode(self, audio_path):
-            return torch.zeros((8, 100), dtype=torch.long)  # Mock RVQ codes
-    
-    class ChatMLDatasetSample:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-    
-    AUDIO_IN_TOKEN = "<|AUDIO_IN|>"
-    AUDIO_OUT_TOKEN = "<|AUDIO_OUT|>"
 
-class HiggsAudioCollator:
-    """Data collator for HiggsAudio that handles both text and audio."""
-    
-    def __init__(self, text_tokenizer, audio_tokenizer, mask_first_audio_step=True, 
-                 mask_eos_in_audio=False, min_text_tokens=50, text_weight=1.0, **kwargs):
-        self.text_tokenizer = text_tokenizer
-        self.audio_tokenizer = audio_tokenizer
-        self.mask_first_audio_step = mask_first_audio_step
-        self.mask_eos_in_audio = mask_eos_in_audio
-        self.min_text_tokens = min_text_tokens
-        self.text_weight = text_weight
-        
-        # Add audio tokens to tokenizer if not present
-        special_tokens_added = False
-        if AUDIO_IN_TOKEN not in text_tokenizer.get_vocab():
-            text_tokenizer.add_tokens([AUDIO_IN_TOKEN], special_tokens=True)
-            special_tokens_added = True
-        if AUDIO_OUT_TOKEN not in text_tokenizer.get_vocab():
-            text_tokenizer.add_tokens([AUDIO_OUT_TOKEN], special_tokens=True)
-            special_tokens_added = True
-        
-        if special_tokens_added:
-            print(f"[INFO] Added audio special tokens to tokenizer")
-            # Update tokenizer vocab size
-            print(f"[INFO] Tokenizer vocab size after adding special tokens: {len(text_tokenizer)}")
-        
-        # Get audio token IDs
-        self.audio_in_token_id = text_tokenizer.convert_tokens_to_ids(AUDIO_IN_TOKEN)
-        self.audio_out_token_id = text_tokenizer.convert_tokens_to_ids(AUDIO_OUT_TOKEN)
-        print(f"[INFO] Audio token IDs - IN: {self.audio_in_token_id}, OUT: {self.audio_out_token_id}")
-        
-        # Get special token IDs
-        self.text_bos_id = text_tokenizer.bos_token_id or text_tokenizer.eos_token_id
-        self.text_eos_id = text_tokenizer.eos_token_id
-        self.text_pad_id = text_tokenizer.pad_token_id or text_tokenizer.eos_token_id
-        
-        # Audio special tokens
-        self.audio_bos_id = 1024  # Start of sequence for audio codes
-        self.audio_eos_id = 1025  # End of sequence for audio codes
-        
-        print(f"[INFO] HiggsAudioCollator initialized - Text PAD: {self.text_pad_id}, Audio BOS/EOS: {self.audio_bos_id}/{self.audio_eos_id}")
+# === Audio tokenizer placeholder ===
+try:
+    from boson_multimodal.audio_tokenizer import AudioTokenizer
+    AUDIO_TOKENIZER_AVAILABLE = True
+except ImportError:
+    AUDIO_TOKENIZER_AVAILABLE = False
+    logger.warning("boson_multimodal not available - install with: pip install boson-multimodal")
 
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
-        """
-        Process batch of features for on-the-fly tokenization.
-        Expected feature format:
-        {
-            "messages": [...],  # ChatML format
-            "ref_audio_path": "path/to/ref.wav", 
-            "tgt_audio_path": "path/to/tgt.wav"
-        }
-        """
-        batch_size = len(features)
         
         # --- 1. On-the-fly Audio Tokenization ---
         ref_audio_codes = []
