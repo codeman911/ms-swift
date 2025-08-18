@@ -99,7 +99,12 @@ class SwiftMixin:
 
         self.model_meta = model.model_meta
 
-        kwargs.update(self.create_loss_and_metric(args))
+        loss_and_metric = self.create_loss_and_metric(args)
+        
+        # Extract compute_loss_func to set as instance attribute (not pass to super().__init__)
+        compute_loss_func = loss_and_metric.pop('compute_loss_func', None)
+        
+        kwargs.update(loss_and_metric)
         with self.hub.patch_hub():
             super().__init__(
                 model=model,
@@ -112,6 +117,9 @@ class SwiftMixin:
                 callbacks=callbacks,
                 optimizers=optimizers,
                 **kwargs)
+        
+        # Set compute_loss_func as instance attribute after super().__init__()
+        self.compute_loss_func = compute_loss_func
 
         if get_function(model.__class__.forward) is not get_function(model.forward):
             self.label_names = find_labels(model)
