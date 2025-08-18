@@ -540,25 +540,39 @@ class HiggsAudioCollator:
 
         # Create start indices for audio sequences
         batch_size = len(features)
-        # Each sample has one audio sequence starting at index 0
-        audio_in_ids_start = torch.arange(batch_size, dtype=torch.long)
-        audio_out_ids_start = torch.arange(batch_size, dtype=torch.long)
         
-        # Group locations - for single sequences, it's just [0]
-        audio_out_ids_start_group_loc = torch.zeros(1, dtype=torch.long)
+        # CRITICAL FIX: Flatten audio tensors for merge_input_ids_with_audio_features
+        # The model expects flattened audio codes, not [batch, codebooks, seq_len]
+        # We need to reshape from [B, C, T] to [B*T, C] for proper embedding lookup
+        
+        # Flatten audio_inputs from [B, C, T] to [total_tokens, C]
+        B, C, T_in = audio_inputs.shape
+        audio_inputs_flat = audio_inputs.permute(0, 2, 1).reshape(-1, C)  # [B*T, C]
+        
+        # Flatten padded_tgt_codes similarly
+        _, _, T_out = padded_tgt_codes.shape
+        audio_out_flat = padded_tgt_codes.permute(0, 2, 1).reshape(-1, C)  # [B*T, C]
+        
+        # Create cumulative start indices for flattened sequences
+        # Each batch item contributes T tokens, so starts are [0, T, 2*T, ...]
+        audio_in_ids_start = torch.arange(0, B * T_in, T_in, dtype=torch.long)
+        audio_out_ids_start = torch.arange(0, B * T_out, T_out, dtype=torch.long)
+        
+        # Group locations - for batch processing
+        audio_out_ids_start_group_loc = torch.arange(batch_size, dtype=torch.long)
 
-        # Match HiggsAudioBatchInput format
+        # Match HiggsAudioBatchInput format with flattened audio
         return {
             "input_ids": padded_input_ids,
             "attention_mask": attention_mask,
             "label_ids": text_labels,                  # text labels (shifted)
-            "label_audio_ids": audio_labels,           # audio labels (masked)
-            "audio_in_ids": audio_inputs,              # BOS + shifted target codes
-            "audio_in_ids_start": audio_in_ids_start,  # start indices for each audio sequence
-            "audio_out_ids": padded_tgt_codes,         # raw target codes (unshifted)
-            "audio_out_ids_start": audio_out_ids_start,# start indices for output audio
-            "audio_out_ids_start_group_loc": audio_out_ids_start_group_loc, # group locations
-            "audio_features": padded_ref_codes,        # using ref codes as features for now
+            "label_audio_ids": audio_labels,           # audio labels (masked) - keep original shape
+            "audio_in_ids": audio_inputs_flat,         # FLATTENED: [total_tokens, num_codebooks]
+            "audio_in_ids_start": audio_in_ids_start,  # cumulative start indices
+            "audio_out_ids": audio_out_flat,           # FLATTENED: [total_tokens, num_codebooks]
+            "audio_out_ids_start": audio_out_ids_start,# cumulative start indices
+            "audio_out_ids_start_group_loc": audio_out_ids_start_group_loc, # batch indices
+            "audio_features": padded_ref_codes,        # keep as [B, C, T] for features
             "audio_feature_attention_mask": torch.ones(padded_ref_codes.shape[:2], dtype=torch.long),
             "reward": None
         }
