@@ -142,6 +142,27 @@ def load_higgs_chatml_dataset(dataset_syntax, dataset_meta, **kwargs) -> Dataset
         if not isinstance(sample["messages"], list):
             sample["messages"] = []
         
+        # Normalize messages content field - this is the main issue
+        for msg in sample["messages"]:
+            if isinstance(msg, dict):
+                content = msg.get("content", "")
+                # Convert all content to strings to avoid mixed list/non-list types
+                if isinstance(content, list):
+                    # Extract text content from complex structures
+                    text_parts = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif item.get("type") == "audio":
+                                # Keep audio reference as text
+                                text_parts.append(f"[AUDIO: {item.get('audio_url', '')}]")
+                        else:
+                            text_parts.append(str(item))
+                    msg["content"] = " ".join(text_parts)
+                elif not isinstance(content, str):
+                    msg["content"] = str(content)
+        
         # Ensure string fields are always strings (not None)
         for key in ["id", "ref_audio_path", "tgt_audio_path", "lang", "speaker"]:
             if sample[key] is None:
