@@ -327,8 +327,7 @@ class HiggsChatMLTemplate(Template):
 
 # ---- Register the template so `--template higgs_chatml` works ----
 register_template(
-    name="higgs_chatml",
-    meta=TemplateMeta(
+    TemplateMeta(
         template_type="higgs_chatml",
         prefix=[],  # No prefix needed for ChatML
         prompt=['<|im_start|>user\n{{QUERY}}<|im_end|>\n<|im_start|>assistant\n'],
