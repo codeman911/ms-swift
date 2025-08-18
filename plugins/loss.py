@@ -144,11 +144,12 @@ def higgs_text_only_loss(outputs, labels, loss_scale=None, num_items_in_batch=No
     
     return loss
 
-# Register loss functions for MS-SWIFT
-# MS-SWIFT will look for loss_mapping dictionary
-loss_mapping = {
-    "higgs_text_audio": higgs_text_audio_loss,
-    "higgs_text_only": higgs_text_only_loss
-}
+# Register loss functions with MS-SWIFT's plugin system
+from swift.plugin.loss import loss_mapping
 
-print("[INFO] Registered custom loss functions: higgs_text_audio, higgs_text_only")
+# Add our custom loss functions to MS-SWIFT's loss mapping
+loss_mapping["higgs_text_audio"] = higgs_text_audio_loss
+loss_mapping["higgs_text_only"] = higgs_text_only_loss
+
+print(f"[INFO] Registered custom loss functions: higgs_text_audio, higgs_text_only")
+print(f"[INFO] Available loss functions: {list(loss_mapping.keys())}")
