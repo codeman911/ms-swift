@@ -3,386 +3,211 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 
-# Force HuggingFace Hub download (set before any imports)
-os.environ['USE_HF'] = '1'
-os.environ['USE_MODELSCOPE_HUB'] = '0'
-os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
-
 import torch
 import json
 import librosa
-from swift.llm import (register_dataset, register_template, register_model, 
-                       DatasetMeta, TemplateMeta, ModelMeta, Model, ModelGroup, ModelInfo)
+from swift.llm import (register_dataset, register_template, DatasetMeta, 
+                       TemplateMeta, Template, ModelType)
 from torch.utils.data import Dataset
 
 # --- Higgs Audio Imports ---
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'higgs-audio'))
-
-from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
-from boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
-from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
-from boson_multimodal.constants import AUDIO_IN_TOKEN, AUDIO_OUT_TOKEN
-from transformers import AutoConfig, AutoTokenizer
-
-# --- Validation Contract Imports ---
-from contracts import ValidatingHiggsAudioModel, ValidatingHiggsAudioSampleCollator
+# Note: Ensure higgs-audio is installed or in your PYTHONPATH
+from higgs_audio.boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer, HiggsAudioTokenizer
 
 # Setup logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- 1. Validating Dataset Load Function ---
+# --- Constants ---
+# These should match the special tokens in your LLM tokenizer
+AUDIO_IN_TOKEN = "<|audio_in|>"
+AUDIO_OUT_TOKEN = "<|audio_out|>"
 
-def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **kwargs):
-    """
-    Load function for validating Higgs ChatML dataset with robust Arrow schema.
-    """
-    from datasets import Dataset as HFDataset, Features, Value, Sequence
-    
-    # Extract path from DatasetSyntax object
-    path = dataset_syntax.dataset if hasattr(dataset_syntax, 'dataset') else str(dataset_syntax)
-    logger.info(f"Loading ValidatingHiggsChatMLDataset from {path}...")
-    
-    # Load the dataset JSON
-    with open(path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    logger.info(f"Loaded {len(data)} samples from {path}")
-    
-    def normalize_content(content):
-        """Normalize ALL content to bulletproof consistent structure."""
-        if isinstance(content, str):
-            return [{
-                "type": "text",
-                "text": content,
-                "audio_url": "",
-                "raw_audio": "",
-                "duration": 0.0,
-                "offset": 0.0
-            }]
-        elif isinstance(content, list):
-            normalized_list = []
-            for item in content:
-                if isinstance(item, dict):
-                    normalized_item = {
-                        "type": str(item.get("type", "text")),
-                        "text": str(item.get("text", "")),
-                        "audio_url": str(item.get("audio_url") or ""),
-                        "raw_audio": str(item.get("raw_audio", "")),
-                        "duration": float(item.get("duration") or 0.0),
-                        "offset": float(item.get("offset") or 0.0)
-                    }
-                    normalized_list.append(normalized_item)
-                else:
-                    normalized_list.append({
-                        "type": "text",
-                        "text": str(item),
-                        "audio_url": "",
-                        "raw_audio": "",
-                        "duration": 0.0,
-                        "offset": 0.0
-                    })
-            return normalized_list
-        else:
-            return [{
-                "type": "text",
-                "text": str(content),
-                "audio_url": "",
-                "raw_audio": "",
-                "duration": 0.0,
-                "offset": 0.0
-            }]
-    
-    def extract_text_from_content(content):
-        """Extract text for MS-SWIFT template processing."""
-        if isinstance(content, list):
-            text_parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text_parts.append(item.get("text", ""))
-            return " ".join(text_parts).strip()
-        return str(content)
-    
-    # Process data for MS-SWIFT standard format with validation
-    normalized_data = []
-    skipped_count = 0
-    
-    for i, sample in enumerate(data):
-        messages = sample.get("messages", [])
-        
-        # Validate messages structure
-        if not messages or not isinstance(messages, list):
-            logger.warning(f"Sample {i}: Invalid messages structure - skipping")
-            skipped_count += 1
-            continue
-            
-        # Create standard MS-SWIFT messages format
-        processed_messages = []
-        valid_sample = True
-        
-        for msg_idx, msg in enumerate(messages):
-            if not isinstance(msg, dict):
-                logger.warning(f"Sample {i}, message {msg_idx}: Invalid message format - skipping sample")
-                valid_sample = False
-                break
-                
-            role = str(msg.get("role", "user"))
-            content = msg.get("content", "")
-            
-            # Validate role
-            if not role or role not in ["system", "user", "assistant"]:
-                logger.warning(f"Sample {i}, message {msg_idx}: Invalid role '{role}' - skipping sample")
-                valid_sample = False
-                break
-            
-            # Extract and validate content
-            text_content = extract_text_from_content(content)
-            if not text_content.strip():
-                logger.warning(f"Sample {i}, message {msg_idx}: Empty content after extraction - skipping sample")
-                valid_sample = False
-                break
-            
-            normalized_content = normalize_content(content)
-            
-            processed_msg = {
-                "role": role,
-                "content": text_content.strip(),  # MS-SWIFT expects text content here
-                "normalized_content": normalized_content  # Store multimodal data separately
-            }
-            processed_messages.append(processed_msg)
-        
-        if valid_sample and processed_messages:
-            normalized_data.append({
-                "messages": processed_messages,
-                "speaker": str(sample.get("speaker", "")),
-                "start_index": int(sample.get("start_index", 0))
-            })
-        else:
-            skipped_count += 1
-    
-    logger.info(f"Processed {len(normalized_data)} valid samples, skipped {skipped_count} invalid samples")
-    
-    # Define Features schema - avoid Sequence to prevent dict conversion
-    features = Features({
-        "messages": [{"role": Value("string"), "content": Value("string")}],
-        "speaker": Value("string"),
-        "start_index": Value("int64")
-    })
-    
-    # Simplify data for MS-SWIFT - only keep text content for messages
-    simplified_data = []
-    for item in normalized_data:
-        simplified_messages = []
-        for msg in item["messages"]:
-            simplified_messages.append({
-                "role": msg["role"],
-                "content": msg["content"]  # Only text content for MS-SWIFT
-            })
-        simplified_data.append({
-            "messages": simplified_messages,
-            "speaker": item["speaker"],
-            "start_index": item["start_index"]
-        })
-    
-    # Create dataset with simplified data
-    hf_dataset = HFDataset.from_list(simplified_data)
-    
-    logger.info(f"ValidatingHiggsChatMLDataset: {len(hf_dataset)} samples loaded successfully.")
-    
-    return hf_dataset
+# --- 1. Custom Dataset for your ChatML format ---
 
-# Register the validating dataset
+class HiggsChatMLDataset(Dataset):
+    """Dataset to parse the specific JSON structure provided."""
+    def __init__(self, dataset_path: str):
+        self.dataset_path = dataset_path
+        self.data = []
+        with open(dataset_path, 'r', encoding='utf-8') as f:
+            self.data = json.load(f)
+        logger.info(f"Loaded {len(self.data)} samples from {dataset_path}")
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx) -> Dict[str, Any]:
+        sample = self.data[idx]
+        messages = sample['messages']
+        
+        ref_audio_path = None
+        tgt_audio_path = None
+        
+        # Extract audio paths from the nested content
+        # User message contains reference audio
+        for item in messages[1]['content']:
+            if item['type'] == 'audio':
+                ref_audio_path = item['audio_url']
+                break
+        
+        # Assistant message contains target audio
+        for item in messages[2]['content']:
+            if item['type'] == 'audio':
+                tgt_audio_path = item['audio_url']
+                break
+
+        if not ref_audio_path or not tgt_audio_path:
+            raise ValueError(f"Audio path not found in sample {idx}")
+
+        # Resolve relative paths if necessary
+        base_dir = os.path.dirname(self.dataset_path)
+        ref_audio_path = os.path.join(base_dir, ref_audio_path)
+        tgt_audio_path = os.path.join(base_dir, tgt_audio_path)
+
+        return {
+            "messages": messages,
+            "ref_audio_path": ref_audio_path,
+            "tgt_audio_path": tgt_audio_path,
+        }
+
+# Register the dataset with ms-swift
 register_dataset(DatasetMeta(
-    dataset_name="higgs-chatml-validating",
-    dataset_path="../higgs-audio/lora_training_data_zr/chatml_fixed/val_chatml_samples.json",
-    load_function=load_validating_higgs_chatml_dataset,
+    dataset_id="higgs-chatml-custom",
+    get_function=HiggsChatMLDataset,
+    is_custom=True
 ))
 
-# --- 2. Validating Template Registration ---
 
-# Function to create validating data collator
-def get_validating_higgs_data_collator(tokenizer, **kwargs):
-    """Returns the validating collator instance."""
-    from transformers.models.whisper.processing_whisper import WhisperProcessor
-    
-    # Initialize WhisperProcessor for audio features
-    whisper_processor = WhisperProcessor.from_pretrained("openai/whisper-base")
-    
-    # Get special token IDs from tokenizer
-    audio_in_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO|>") 
-    audio_out_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO_OUT|>")
-    pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
-    
-    # Audio stream tokens (from Higgs Audio config)
-    audio_stream_bos_id = 1024  # Start of audio sequence
-    audio_stream_eos_id = 1025  # End of audio sequence
-    
-    return ValidatingHiggsAudioSampleCollator(
-        whisper_processor=whisper_processor,
-        audio_in_token_id=audio_in_token_id,
-        audio_out_token_id=audio_out_token_id,
-        pad_token_id=pad_token_id,
-        audio_stream_bos_id=audio_stream_bos_id,
-        audio_stream_eos_id=audio_stream_eos_id,
-    )
+# --- 2. Custom Data Collator ---
 
-# --- 2. Custom Template Class with Audio Data Collator ---
-
-from swift.llm.template.base import Template
-from typing import List, Dict, Any, Optional
-
-# Simple dataclass to replace ChatMLDatasetSample when higgs-audio not available
 @dataclass
-class SimpleChatMLSample:
-    """Simplified version of ChatMLDatasetSample for MS-SWIFT compatibility."""
-    input_ids: torch.Tensor
-    label_ids: torch.Tensor
-    audio_ids_concat: torch.Tensor
-    audio_ids_start: torch.Tensor
-    audio_waveforms_concat: torch.Tensor
-    audio_waveforms_start: torch.Tensor
-    audio_sample_rate: torch.Tensor
-    audio_speaker_indices: torch.Tensor
-    audio_label_ids_concat: Optional[torch.Tensor] = None
-    reward: Optional[float] = None
-
-class ValidatingHiggsChatMLTemplate(Template):
-    """Custom template to use ValidatingHiggsAudioSampleCollator for audio-aware collation."""
+class HiggsAudioCollator:
+    """A custom data collator for on-the-fly Higgs Audio tokenization."""
+    llm_tokenizer: Any  # The tokenizer for the text part (e.g., from Llama)
+    audio_tokenizer: HiggsAudioTokenizer
     
-    def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
-        """Custom data collator that converts MS-SWIFT dicts to ChatMLDatasetSample objects."""
-        import torch
+    def __post_init__(self):
+        # Get special token IDs from the LLM tokenizer
+        self.text_bos_id = self.llm_tokenizer.bos_token_id
+        self.text_eos_id = self.llm_tokenizer.eos_token_id
+        self.text_pad_id = self.llm_tokenizer.pad_token_id
         
-        # Try to import ChatMLDatasetSample, fall back to simplified version if not available
-        try:
-            from boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
-            SampleClass = ChatMLDatasetSample
-            print("[INFO] Using ChatMLDatasetSample from higgs-audio")
-        except ImportError:
-            print("[WARNING] ChatMLDatasetSample not available, using SimpleChatMLSample")
-            SampleClass = SimpleChatMLSample
-        
-        tokenizer = self.tokenizer
-        
-        # Initialize WhisperProcessor for audio feature processing
-        whisper_processor = WhisperProcessor.from_pretrained("openai/whisper-base")
-        
-        # Convert MS-SWIFT dictionary format to ChatMLDatasetSample objects
-        converted_batch = []
-        for item in batch:
-            # Extract fields from MS-SWIFT dict format
-            input_ids = item.get('input_ids', torch.tensor([], dtype=torch.long))
-            label_ids = item.get('labels', torch.tensor([], dtype=torch.long))
+        # From Higgs Audio, for audio codes
+        self.audio_bos_id = 1024  # Start of sequence for audio codes
+        self.audio_eos_id = 1025  # End of sequence for audio codes
+        logger.info(f"Collator initialized. Text PAD ID: {self.text_pad_id}, Audio BOS/EOS: {self.audio_bos_id}/{self.audio_eos_id}")
+
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        # --- 1. On-the-fly Audio Tokenization ---
+        ref_audio_codes = []
+        tgt_audio_codes = []
+        for feature in features:
+            # Encode reference and target audio files
+            ref_codes = self.audio_tokenizer.encode(feature["ref_audio_path"])
+            tgt_codes = self.audio_tokenizer.encode(feature["tgt_audio_path"])
+            ref_audio_codes.append(torch.tensor(ref_codes, dtype=torch.long))
+            tgt_audio_codes.append(torch.tensor(tgt_codes, dtype=torch.long))
+
+        # --- 2. Prepare Text and Labels ---
+        all_input_ids = []
+        for feature in features:
+            # Reconstruct the conversation string, inserting special audio tokens
+            # System prompt
+            text_sequence = self.llm_tokenizer.bos_token + feature['messages'][0]['content']
+            # User prompt with reference audio placeholder
+            text_sequence += self.llm_tokenizer.eos_token + '\nUSER: ' + AUDIO_IN_TOKEN + feature['messages'][1]['content'][2]['text']
+            # Assistant response with target audio placeholder
+            text_sequence += self.llm_tokenizer.eos_token + '\nASSISTANT: ' + AUDIO_OUT_TOKEN + feature['messages'][2]['content'][0]['text'] + self.llm_tokenizer.eos_token
             
-            # Convert to tensors if they aren't already
-            if not isinstance(input_ids, torch.Tensor):
-                input_ids = torch.tensor(input_ids, dtype=torch.long)
-            if not isinstance(label_ids, torch.Tensor):
-                label_ids = torch.tensor(label_ids, dtype=torch.long)
-            
-            # Create sample with required fields
-            # For audio fields, use empty tensors as defaults since MS-SWIFT doesn't provide them directly
-            sample = SampleClass(
-                input_ids=input_ids,
-                label_ids=label_ids,
-                audio_ids_concat=torch.tensor([[]], dtype=torch.long),  # Empty 2D tensor
-                audio_ids_start=torch.tensor([], dtype=torch.long),
-                audio_waveforms_concat=torch.tensor([], dtype=torch.float32),
-                audio_waveforms_start=torch.tensor([], dtype=torch.long),
-                audio_sample_rate=torch.tensor([], dtype=torch.float32),
-                audio_speaker_indices=torch.tensor([], dtype=torch.long),
-                audio_label_ids_concat=None,
-                reward=None,
-            )
-            converted_batch.append(sample)
-        
-        # Create the ValidatingHiggsAudioSampleCollator
-        collator = ValidatingHiggsAudioSampleCollator(
-            whisper_processor=whisper_processor,
-            audio_in_token_id=tokenizer.convert_tokens_to_ids("<|AUDIO|>"),
-            audio_out_token_id=tokenizer.convert_tokens_to_ids("<|AUDIO_OUT|>"),
-            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-            audio_stream_bos_id=1024,  # Audio stream beginning token ID
-            audio_stream_eos_id=1025,  # Audio stream ending token ID
+            tokenized_sequence = self.llm_tokenizer(text_sequence, return_tensors='pt').input_ids.squeeze(0)
+            all_input_ids.append(tokenized_sequence)
+
+        # --- 3. Padding --- 
+        # Pad text inputs
+        padded_input_ids = torch.nn.utils.rnn.pad_sequence(
+            all_input_ids, batch_first=True, padding_value=self.text_pad_id
         )
         
-        # Call the HiggsAudio collator with the converted batch
-        return collator(converted_batch)
+        # Pad audio codes (num_quantizers, seq_len)
+        padded_ref_codes = self._pad_audio(ref_audio_codes)
+        padded_tgt_codes = self._pad_audio(tgt_audio_codes)
+        
+        # --- 4. Create Labels ---
+        # Create text labels (standard next-token prediction, ignore padding)
+        text_labels = padded_input_ids.clone()
+        text_labels[text_labels == self.text_pad_id] = -100
 
-# Register template with custom class
+        # Create audio labels (teacher-forcing)
+        audio_inputs, audio_labels = self._prepare_audio_teacher_forcing(padded_tgt_codes)
+        
+        # --- 5. Create Attention Masks ---
+        attention_mask = (padded_input_ids != self.text_pad_id).long()
+
+        # --- Logging for Debugging ---
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Batch Size: {len(features)}")
+            logger.debug(f"Padded Input IDs Shape: {padded_input_ids.shape}")
+            logger.debug(f"Padded Ref Audio Codes Shape: {padded_ref_codes.shape}")
+            logger.debug(f"Audio Inputs Shape: {audio_inputs.shape}")
+            logger.debug(f"Audio Labels Shape: {audio_labels.shape}")
+            logger.debug(f"First Input IDs: {padded_input_ids[0, :32]}")
+
+        return {
+            "input_ids": padded_input_ids,
+            "attention_mask": attention_mask,
+            "labels": text_labels,
+            "ref_audio_codes": padded_ref_codes,
+            "tgt_audio_codes_input": audio_inputs,
+            "tgt_audio_codes_labels": audio_labels,
+        }
+
+    def _pad_audio(self, audio_codes_list: List[torch.Tensor]) -> torch.Tensor:
+        """Pads a list of audio code tensors to the same length."""
+        max_len = max(c.shape[1] for c in audio_codes_list)
+        num_quantizers = audio_codes_list[0].shape[0]
+        padded_batch = torch.full((len(audio_codes_list), num_quantizers, max_len), self.audio_eos_id, dtype=torch.long)
+
+        for i, codes in enumerate(audio_codes_list):
+            padded_batch[i, :, :codes.shape[1]] = codes
+        return padded_batch
+
+    def _prepare_audio_teacher_forcing(self, audio_codes: torch.Tensor) -> (torch.Tensor, torch.Tensor):
+        """Prepare audio codes for teacher-forcing in the decoder."""
+        # Input: BOS -> code_1 -> ... -> code_n-1
+        inputs = audio_codes.clone()
+        inputs = torch.cat([
+            torch.full((inputs.shape[0], inputs.shape[1], 1), self.audio_bos_id, dtype=torch.long),
+            inputs[..., :-1]
+        ], dim=-1)
+        
+        # Labels: code_1 -> ... -> code_n -> EOS
+        labels = audio_codes.clone()
+        # Mask the BOS token in the labels, as it's not predicted
+        labels[labels == self.audio_bos_id] = -100 # Should not happen if BOS is not in vocab, but good practice
+        return inputs, labels
+
+# --- 3. Custom Template to provide the Collator ---
+
+class HiggsChatMLTemplate(Template):
+    def __init__(self, tokenizer, **kwargs):
+        super().__init__(template_type="higgs-chatml-custom", tokenizer=tokenizer, **kwargs)
+        # Instantiate the audio tokenizer once, it will be passed to the collator
+        logger.info("Initializing HiggsAudioTokenizer...")
+        self.audio_tokenizer = load_higgs_audio_tokenizer("bosonai/higgs-audio-v2-tokenizer", device="cpu")
+        logger.info("HiggsAudioTokenizer loaded successfully.")
+
+    def _data_collator(self, **kwargs) -> Any:
+        # This method is called by ms-swift to get the collator instance
+        return HiggsAudioCollator(llm_tokenizer=self.tokenizer, audio_tokenizer=self.audio_tokenizer)
+
+    def _encode(self, **kwargs) -> Any:
+        # This template is only for training with the custom collator
+        raise NotImplementedError("This template does not support synchronous encoding.")
+
+# Register the template with ms-swift
 register_template(TemplateMeta(
-    template_type="higgs-chatml-validating",
-    prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
-    prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
-    chat_sep=['<|eot_id|>'],
-    template_cls=ValidatingHiggsChatMLTemplate,  # Use custom template class
+    template_type="higgs-chatml-custom",
+    template_cls=HiggsChatMLTemplate,
+    is_custom=True
 ))
-
-# --- 3. Validating Model Registration ---
-
-def get_validating_higgs_audio_model(model_dir: str,
-                                     model_info: ModelInfo,
-                                     model_kwargs: Dict[str, Any],
-                                     load_model: bool = True,
-                                     **kwargs):
-    """Return (model, tokenizer) for the validating Higgs-Audio model.
-
-    Matches ms-swift get_function signature.
-    """
-    logger.info("Loading ValidatingHiggsAudioModel and tokenizer...")
-    
-    # Force HuggingFace Hub download
-    os.environ['USE_HF'] = '1'
-    os.environ['USE_MODELSCOPE_HUB'] = '0'
-
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-    if getattr(tokenizer, "pad_token_id", None) is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-
-    model = None
-    if load_model:
-        try:
-            # Try to load HiggsAudioModel if available
-            try:
-                from higgs_audio.models.higgs_audio_model import HiggsAudioModel
-                base_model = HiggsAudioModel.from_pretrained(
-                    model_dir,
-                    torch_dtype=model_info.torch_dtype,
-                    trust_remote_code=True,
-                    **model_kwargs
-                )
-                logger.info("Successfully loaded HiggsAudioModel")
-            except Exception as e:
-                logger.warning(f"Failed to load HiggsAudioModel: {e}, using AutoModelForCausalLM")
-                from transformers import AutoModelForCausalLM
-                base_model = AutoModelForCausalLM.from_pretrained(
-                    model_dir,
-                    torch_dtype=model_info.torch_dtype,
-                    trust_remote_code=True,
-                    **model_kwargs
-                )
-            
-            # Wrap in ValidatingHiggsAudioModel
-            model = ValidatingHiggsAudioModel(base_model)
-            logger.info("Created ValidatingHiggsAudioModel wrapper")
-            
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise
-
-    logger.info("ValidatingHiggsAudioModel and tokenizer prepared.")
-    return model, tokenizer
-
-# Register the validating model
-register_model(ModelMeta(
-    model_type="higgs-audio-validating",
-    model_groups=[
-        ModelGroup([Model(hf_model_id="bosonai/higgs-audio-v2-generation-3B-base")])
-    ],
-    template="higgs-chatml-validating",
-    get_function=get_validating_higgs_audio_model,
-    model_arch="higgs-audio",
-))
-
-logger.info("Validating Higgs Audio registration completed successfully.")
