@@ -246,8 +246,8 @@ class HiggsChatMLTemplate(Template):
       - relies on remove_unused_columns=false so we see raw fields
     """
 
-    def __init__(self, tokenizer, **kwargs):
-        super().__init__(tokenizer, **kwargs)
+    def __init__(self, template_meta, processor, **kwargs):
+        super().__init__(template_meta, processor, **kwargs)
         self._text_tok = None
         self._audio_tok = None
         self._collator = None
