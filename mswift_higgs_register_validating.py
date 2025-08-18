@@ -227,13 +227,53 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
         audio_stream_eos_id=audio_stream_eos_id,
     )
 
-# Register standard template for clean training with audio-aware data collator
+# --- 2. Custom Template Class with Audio Data Collator ---
+
+from swift.llm.template.base import Template
+from swift.llm.template.register import TemplateMeta, register_template
+from typing import List, Dict, Any, Optional
+
+class ValidatingHiggsChatMLTemplate(Template):
+    """Custom template class with ValidatingHiggsAudioSampleCollator."""
+    
+    def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
+        """Use ValidatingHiggsAudioSampleCollator for audio-aware collation."""
+        
+        # Get the tokenizer from the template
+        tokenizer = self.tokenizer
+        
+        # Initialize ValidatingHiggsAudioSampleCollator
+        from transformers.models.whisper.processing_whisper import WhisperProcessor
+        whisper_processor = WhisperProcessor.from_pretrained("openai/whisper-base")
+        
+        # Get special token IDs from tokenizer
+        audio_in_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO|>") 
+        audio_out_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO_OUT|>")
+        pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+        
+        # Audio stream tokens (from Higgs Audio config)
+        audio_stream_bos_id = 1024  # Start of audio sequence
+        audio_stream_eos_id = 1025  # End of audio sequence
+        
+        collator = ValidatingHiggsAudioSampleCollator(
+            whisper_processor=whisper_processor,
+            audio_in_token_id=audio_in_token_id,
+            audio_out_token_id=audio_out_token_id,
+            pad_token_id=pad_token_id,
+            audio_stream_bos_id=audio_stream_bos_id,
+            audio_stream_eos_id=audio_stream_eos_id,
+        )
+        
+        # Use the ValidatingHiggsAudioSampleCollator
+        return collator(batch)
+
+# Register template with custom class
 register_template(TemplateMeta(
     template_type="higgs-chatml-validating",
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
-    data_collator=get_validating_higgs_data_collator,  # Register audio-aware collator with template
+    template_cls=ValidatingHiggsChatMLTemplate,  # Use custom template class
 ))
 
 # --- 3. Validating Model Registration ---
