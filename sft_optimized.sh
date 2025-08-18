@@ -4,9 +4,16 @@
 # Uses MS-SWIFT native acceleration features for maximum performance
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export OMP_NUM_THREADS=16  # 128/8 = 16 threads per GPU
+export OMP_NUM_THREADS=16  # 128 cores / 8 GPUs = 16 threads per GPU
 export NCCL_IB_DISABLE=0
 export NCCL_IB_GID_INDEX=3
+export NCCL_SOCKET_IFNAME=eth0
+export NCCL_DEBUG=INFO
+
+# DeepSpeed configuration for optimal memory usage
+export DEEPSPEED_ZERO_STAGE=3
+export DEEPSPEED_OFFLOAD_OPTIMIZER=true
+export DEEPSPEED_OFFLOAD_PARAM=true
 
 swift sft \
     --custom_register_path ./mswift_higgs_register_validating.py \
@@ -14,33 +21,33 @@ swift sft \
     --model ../train-higgs-audio/model_file/ \
     --template higgs-chatml-validating \
     --dataset higgs-chatml-validating \
-    --val_dataset_sample 0.1 \
+    \
     --train_type lora \
-    --lora_rank 8 \
-    --lora_alpha 32 \
-    --lora_dropout 0.1 \
+    --lora_rank 16 \
+    --lora_alpha 64 \
+    --lora_dropout 0.05 \
     --lora_target_modules ALL \
     --adalora_beta1 0.9 \
     --adalora_beta2 0.95 \
     \
-    --num_train_epochs 1 \
-    --max_length 2048 \
-    --learning_rate 5e-4 \
+    --num_train_epochs 3 \
+    --max_length 4096 \
+    --learning_rate 2e-4 \
     --weight_decay 0.01 \
-    --warmup_ratio 0.1 \
+    --warmup_ratio 0.03 \
     --lr_scheduler_type cosine \
     --adam_beta1 0.9 \
     --adam_beta2 0.95 \
     --adam_epsilon 1e-8 \
     \
-    --per_device_train_batch_size 8 \
+    --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 8 \
     --dataloader_num_workers 32 \
     --dataloader_pin_memory true \
     --dataloader_persistent_workers true \
     \
-    --deepspeed zero3 \
+    --deepspeed default-zero3 \
     --bf16 true \
     --tf32 true \
     --gradient_checkpointing true \
@@ -49,10 +56,7 @@ swift sft \
     --ddp_broadcast_buffers false \
     \
     --max_grad_norm 1.0 \
-    --logging_steps 10 \
-    --save_steps 500 \
-    --eval_steps 500 \
-    --save_total_limit 2 \
+    --logging_steps 5 \
     --save_steps 250 \
     --eval_steps 250 \
     --save_total_limit 3 \

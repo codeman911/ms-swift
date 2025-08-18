@@ -1,0 +1,1 @@
+{"train_dataset": "145.297215±65.049408, min=50.000000, max=1446.000000, size=653160", "model_parameter_info": "PeftModelForCausalLM: 5791.0098M Params (19.7263M Trainable [0.3406%]), 0.0019M Buffers.", "last_model_checkpoint": null, "best_model_checkpoint": null, "best_metric": null, "global_step": 0, "log_history": [], "memory": 0}
