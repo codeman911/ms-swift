@@ -136,6 +136,19 @@ def load_higgs_chatml_dataset(dataset_syntax, dataset_meta, **kwargs) -> Dataset
     
     print(f"[INFO] Normalized {len(normalized_data)} valid samples")
     
+    # Ensure consistent data types for PyArrow compatibility
+    for sample in normalized_data:
+        # Ensure messages is always a list
+        if not isinstance(sample["messages"], list):
+            sample["messages"] = []
+        
+        # Ensure string fields are always strings (not None)
+        for key in ["id", "ref_audio_path", "tgt_audio_path", "lang", "speaker"]:
+            if sample[key] is None:
+                sample[key] = ""
+            elif not isinstance(sample[key], str):
+                sample[key] = str(sample[key])
+    
     # Convert to HuggingFace Dataset
     dataset = Dataset.from_list(normalized_data)
     
