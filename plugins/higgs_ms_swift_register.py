@@ -25,7 +25,18 @@ try:
     from boson_multimodal.audio_processing.higgs_audio_tokenizer import HiggsAudioTokenizer
     from boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample
     from boson_multimodal.constants import AUDIO_IN_TOKEN, AUDIO_OUT_TOKEN
+    from boson_multimodal.model.higgs_audio import HiggsAudioConfig, HiggsAudioModel
     print("[INFO] Successfully imported Higgs Audio components")
+    
+    # Register HiggsAudio model with transformers auto classes
+    try:
+        from transformers import AutoConfig, AutoModelForCausalLM
+        AutoConfig.register("higgs_audio", HiggsAudioConfig)
+        AutoModelForCausalLM.register(HiggsAudioConfig, HiggsAudioModel)
+        print("[INFO] Successfully registered HiggsAudio model with transformers auto classes")
+    except Exception as e:
+        print(f"[WARNING] Failed to register HiggsAudio model: {e}")
+        
 except ImportError as e:
     print(f"[ERROR] Failed to import Higgs Audio components: {e}")
     # Fallback imports - create minimal stubs
