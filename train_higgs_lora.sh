@@ -72,7 +72,7 @@ swift sft \
     --save_safetensors true \
     --ignore_data_skip false \
     --lazy_tokenize false \
-    --preprocess_num_proc 8 \
+    --dataset_num_proc 8 \
     --dataloader_num_workers 16 \
     --dataloader_pin_memory true \
     --dataloader_persistent_workers true \
@@ -82,8 +82,5 @@ swift sft \
     --group_by_length false \
     --disable_tqdm false \
     --predict_with_generate false \
-    --generation_max_length 512 \
-    --generation_num_beams 1 \
-    --include_inputs_for_metrics false
 
 echo "[INFO] Training completed successfully!"
