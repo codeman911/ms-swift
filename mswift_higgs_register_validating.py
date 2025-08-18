@@ -227,12 +227,13 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
         audio_stream_eos_id=audio_stream_eos_id,
     )
 
-# Register standard template for clean training
+# Register standard template for clean training with audio-aware data collator
 register_template(TemplateMeta(
     template_type="higgs-chatml-validating",
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
+    data_collator=get_validating_higgs_data_collator,  # Register audio-aware collator with template
 ))
 
 # --- 3. Validating Model Registration ---
@@ -277,7 +278,6 @@ register_model(ModelMeta(
     ],
     template="higgs-chatml-validating",
     get_function=get_validating_higgs_audio_model,
-    data_collator=get_validating_higgs_data_collator,  # Register the audio-aware collator
     model_arch="higgs-audio",
 ))
 
