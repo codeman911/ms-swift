@@ -99,10 +99,33 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
             "start_index": sample.get("start_index", 0),
         })
     
-    # Use from_list instead of from_dict to handle complex nested structures
-    hf_dataset = HFDataset.from_list(dataset_list)
+    # Define explicit Features schema to force consistent types
+    from datasets import Features, Value, Sequence
     
-    logger.info("ValidatingHiggsChatMLDataset created with normalized messages structure.")
+    # Define the schema for content items
+    content_item_schema = {
+        "type": Value("string"),
+        "text": Value("string"), 
+        "audio_url": Value("string"),
+        "raw_audio": Value("string"),
+        "duration": Value("float64"),
+        "offset": Value("float64")
+    }
+    
+    # Define the overall schema
+    features = Features({
+        "messages": Sequence({
+            "role": Value("string"),
+            "content": Sequence(content_item_schema)
+        }),
+        "speaker": Value("string"),
+        "start_index": Value("int64")
+    })
+    
+    # Create dataset with explicit schema
+    hf_dataset = HFDataset.from_list(dataset_list, features=features)
+    
+    logger.info("ValidatingHiggsChatMLDataset created with explicit Arrow schema.")
     return hf_dataset
 
 # Register the validating dataset
@@ -140,9 +163,32 @@ def get_validating_higgs_data_collator(tokenizer, **kwargs):
         audio_stream_eos_id=audio_stream_eos_id,
     )
 
-# Register the validating template using TemplateMeta
+# Custom template class to handle normalized list content
+from swift.llm.template.base import Template
+
+class ValidatingHiggsChatMLTemplate(Template):
+    def __init__(self, tokenizer, system_prefix=None, *args, **kwargs):
+        super().__init__(template_type="higgs-chatml-validating", tokenizer=tokenizer, **kwargs)
+        self.system_prefix = system_prefix
+    
+    def _get_content_text(self, content):
+        """Extract text from normalized content structure."""
+        if isinstance(content, str):
+            return content
+        elif isinstance(content, list):
+            # Extract text parts from normalized list format
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+            return " ".join(text_parts) if text_parts else ""
+        else:
+            return str(content)
+
+# Register the validating template using TemplateMeta with custom class
 register_template(TemplateMeta(
     template_type="higgs-chatml-validating",
+    template_cls=ValidatingHiggsChatMLTemplate,
     prefix=['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
     prompt=['<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n'],
     chat_sep=['<|eot_id|>'],
