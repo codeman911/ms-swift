@@ -163,26 +163,30 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
     
     logger.info(f"Processed {len(normalized_data)} valid samples, skipped {skipped_count} invalid samples")
     
-    # Define Features schema for MS-SWIFT standard format
+    # Define Features schema - avoid Sequence to prevent dict conversion
     features = Features({
-        "messages": Sequence({
-            "role": Value("string"),
-            "content": Value("string"),  # Text content for MS-SWIFT templates
-            "normalized_content": Sequence({
-                "type": Value("string"),
-                "text": Value("string"),
-                "audio_url": Value("string"),
-                "raw_audio": Value("string"),
-                "duration": Value("float64"),
-                "offset": Value("float64")
-            })
-        }),
+        "messages": [{"role": Value("string"), "content": Value("string")}],
         "speaker": Value("string"),
         "start_index": Value("int64")
     })
     
-    # Create dataset with explicit schema
-    hf_dataset = HFDataset.from_list(normalized_data, features=features)
+    # Simplify data for MS-SWIFT - only keep text content for messages
+    simplified_data = []
+    for item in normalized_data:
+        simplified_messages = []
+        for msg in item["messages"]:
+            simplified_messages.append({
+                "role": msg["role"],
+                "content": msg["content"]  # Only text content for MS-SWIFT
+            })
+        simplified_data.append({
+            "messages": simplified_messages,
+            "speaker": item["speaker"],
+            "start_index": item["start_index"]
+        })
+    
+    # Create dataset with simplified data
+    hf_dataset = HFDataset.from_list(simplified_data)
     
     logger.info(f"ValidatingHiggsChatMLDataset: {len(hf_dataset)} samples with robust Arrow schema and dual content format.")
     
@@ -192,9 +196,8 @@ def load_validating_higgs_chatml_dataset(dataset_syntax, dataset_meta, *args, **
         logger.info(f"DEBUG - First sample structure: {list(sample.keys())}")
         logger.info(f"DEBUG - Messages type: {type(sample['messages'])}")
         logger.info(f"DEBUG - Messages length: {len(sample['messages'])}")
-        if len(sample['messages']) > 0:
-            logger.info(f"DEBUG - First message: {sample['messages'][0]}")
-            logger.info(f"DEBUG - First message keys: {list(sample['messages'][0].keys())}")
+        logger.info(f"DEBUG - Messages content: {sample['messages']}")
+        # Skip trying to access [0] since HF converts to dict
     
     return hf_dataset
 
