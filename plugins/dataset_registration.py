@@ -22,7 +22,6 @@ def register_higgs_audio_datasets():
     register_dataset(
         DatasetMeta(
             dataset_name='higgs-audio-tts',
-            dataset_id_or_path=None,  # Will use custom loader
             
             # ChatML columns mapping
             columns=['messages', 'audios'],
@@ -46,7 +45,6 @@ def register_higgs_audio_datasets():
     register_dataset(
         DatasetMeta(
             dataset_name='higgs-voice-cloning',
-            dataset_id_or_path=None,
             columns=['messages', 'audios', 'reference_audio'],
             tags=['voice-cloning', 'zero-shot', 'tts'],
             task='voice-cloning',

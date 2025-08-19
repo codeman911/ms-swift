@@ -67,6 +67,11 @@ def register_higgs_audio_models():
             "model_id": "Boson-AI/Higgs-Audio-V2-LLaMA3",
             "revision": "main",
         },
+        {
+            "model_type": "higgs-audio-v2-generation-3b-base",
+            "model_id": "bosonai/higgs-audio-v2-generation-3B-base",
+            "revision": "main",
+        },
     ]
     
     for config in model_configs:
