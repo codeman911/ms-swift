@@ -14,10 +14,19 @@ if higgs_audio_path.exists():
     sys.path.insert(0, str(higgs_audio_path))
 
 from swift.utils import get_logger
-from .model_registration import register_higgs_audio_models
-from .dataset_registration import register_higgs_audio_datasets
-from .trainer import HiggsAudioTrainer
-from .collator import HiggsAudioCollator
+# Allow import both as top-level module (via --custom_register_path) and as package module
+try:
+    # When imported as a standalone module (module name: 'register')
+    from model_registration import register_higgs_audio_models
+    from dataset_registration import register_higgs_audio_datasets
+    from trainer import HiggsAudioTrainer
+    from collator import HiggsAudioCollator
+except ImportError:
+    # When imported as part of the 'plugins' package (module name: 'plugins.register')
+    from .model_registration import register_higgs_audio_models
+    from .dataset_registration import register_higgs_audio_datasets
+    from .trainer import HiggsAudioTrainer
+    from .collator import HiggsAudioCollator
 
 logger = get_logger()
 
