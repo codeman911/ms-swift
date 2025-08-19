@@ -194,7 +194,7 @@ def register_higgs_audio_model(
                 ),
             ],
             get_function=get_model_tokenizer,
-            template="chatml",  # Use ChatML template for multimodal
+            template="higgs-audio-template",  # Use custom Higgs-Audio template
             requires=["transformers>=4.37.0", "librosa", "soundfile"],
             torch_dtype=torch.bfloat16,
             tags=["audio", "tts", "multimodal", "llm", "voice-cloning"],

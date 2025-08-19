@@ -4,6 +4,8 @@ This module wraps the original Higgs-Audio collator from boson_multimodal
 for seamless integration with MS-SWIFT training.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import torch
@@ -11,6 +13,9 @@ import librosa
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
+
+# Transformers types and processors
+from transformers import PreTrainedTokenizer, WhisperProcessor
 
 # Add Higgs-Audio path to sys.path for imports
 higgs_audio_path = Path(__file__).parent.parent / "higgs-audio"

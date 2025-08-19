@@ -17,7 +17,7 @@ export USE_HF=1
 export USE_MODELSCOPE_HUB=0
 
 # Dataset path (update to your actual dataset)
-DATASET_PATH="higgs-audio/examples/chatml_samples.jsonl"
+DATASET_PATH="temp_chatml_samples.jsonl"
 
 echo "📦 Using plugins: model_registration, collator, trainer, dataset_registration"
 echo "📊 Dataset: $DATASET_PATH"
@@ -26,7 +26,8 @@ echo "🤖 Model: bosonai/higgs-audio-v2-generation-3B-base"
 # Register plugins and start training
 swift sft \
     --model bosonai/higgs-audio-v2-generation-3B-base \
-    --template chatml \
+    --template higgs-audio-template \
+    --sft_type higgs-audio-trainer \
     --custom_register_path plugins/register.py \
     --dataset higgs-audio-tts \
     --dataset_path "$DATASET_PATH" \

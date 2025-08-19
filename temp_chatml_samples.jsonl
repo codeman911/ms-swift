@@ -1,0 +1,1 @@
+{"messages": [{"role": "system", "content": "You are a helpful text-to-speech assistant."}, {"role": "user", "content": "Hello, this is a test audio sample for training. <audio>"}, {"role": "assistant", "content": ""}], "audios": ["/Users/vikram.solanki/Projects/tts/ms-swift/higgs-audio/examples/voice_prompts/en_man.wav"]}
