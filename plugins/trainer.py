@@ -4,13 +4,16 @@ This module wraps the original Higgs-Audio training logic from boson_multimodal
 for seamless integration with MS-SWIFT training pipeline.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, Union
+from contextlib import contextmanager, nullcontext
+from typing import Dict, Any, Optional, Tuple, Union, List
 
 # Add Higgs-Audio path to sys.path for imports
 higgs_audio_path = Path(__file__).parent.parent / "higgs-audio"
@@ -21,6 +24,7 @@ if str(higgs_audio_path) not in sys.path:
 from boson_multimodal.model.higgs_audio import HiggsAudioModel
 from boson_multimodal.data_collator.higgs_audio_collator import HiggsAudioBatchInput
 from transformers import Trainer
+from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from swift.utils import get_logger
 
@@ -61,6 +65,12 @@ class HiggsAudioTrainer(Trainer):
         self.use_delay_pattern_mask = use_delay_pattern_mask
         self.audio_kl_weight = audio_kl_weight
         self.audio_commitment_weight = audio_commitment_weight
+        # Track loss components for optional logging
+        self.loss_components = {
+            'text_loss': [],
+            'audio_loss': [],
+            'auxiliary_loss': []
+        }
         
         logger.info(
             f"Initialized HiggsAudioTrainer with text_weight={text_loss_weight}, "
@@ -234,30 +244,8 @@ class HiggsAudioTrainer(Trainer):
         Returns:
             Loss tensor
         """
-        
-        model.train()
-        
-        # Add training context for Higgs-Audio
-        with self._training_context(model):
-            inputs = self._prepare_inputs(inputs)
-            
-            # Use automatic mixed precision if enabled
-            if self.use_apex and self.fp16:
-                with self.apex.amp.scale_loss() as scaled_loss:
-                    loss = self.compute_loss(model, inputs)
-                    scaled_loss.backward()
-            else:
-                loss = self.compute_loss(model, inputs)
-                
-                if self.args.gradient_accumulation_steps > 1:
-                    loss = loss / self.args.gradient_accumulation_steps
-                
-                if self.use_amp:
-                    self.scaler.scale(loss).backward()
-                else:
-                    loss.backward()
-        
-        return loss.detach()
+        # Delegate to HF Trainer which correctly handles AMP/Accelerate
+        return super().training_step(model, inputs)
     
     @contextmanager
     def _training_context(self, model: nn.Module):
@@ -310,7 +298,9 @@ class HiggsAudioTrainer(Trainer):
         model.eval()
         
         with torch.no_grad():
-            with self.compute_loss_context_manager():
+            cm = getattr(self, 'compute_loss_context_manager', None)
+            context = cm() if callable(cm) else nullcontext()
+            with context:
                 loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
         
         if prediction_loss_only:
