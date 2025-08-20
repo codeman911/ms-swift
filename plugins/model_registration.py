@@ -58,18 +58,13 @@ def register_higgs_audio_models():
     # Define model configurations
     model_configs = [
         {
-            "model_type": "higgs-audio-v2",
-            "model_id": "Boson-AI/Higgs-Audio-V2",
-            "revision": "main",
-        },
-        {
-            "model_type": "higgs-audio-v2-llama3",
-            "model_id": "Boson-AI/Higgs-Audio-V2-LLaMA3",
-            "revision": "main",
-        },
-        {
             "model_type": "higgs-audio-v2-generation-3b-base",
             "model_id": "bosonai/higgs-audio-v2-generation-3B-base",
+            "revision": "main",
+        },
+        {
+            "model_type": "higgs-audio-v2-tokenizer",
+            "model_id": "bosonai/higgs-audio-v2-tokenizer",
             "revision": "main",
         },
     ]
@@ -145,7 +140,13 @@ def register_higgs_audio_model(
                 import os
                 import torch
                 from huggingface_hub import snapshot_download
-                from higgs_audio.boson_multimodal.audio_processing.higgs_audio_tokenizer import HiggsAudioTokenizer
+                # Import from the correct path - higgs-audio directory is in the project root
+                import sys
+                import os
+                higgs_audio_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'higgs-audio')
+                if higgs_audio_path not in sys.path:
+                    sys.path.insert(0, higgs_audio_path)
+                from boson_multimodal.audio_processing.higgs_audio_tokenizer import HiggsAudioTokenizer
                 
                 is_local = os.path.exists(tokenizer_name_or_path)
                 if not is_local:
@@ -235,10 +236,13 @@ def register_higgs_audio_model(
                 **model_kwargs,
             )
             
-            # Enable gradient checkpointing for memory efficiency
-            if hasattr(model, "gradient_checkpointing_enable"):
+            # Enable gradient checkpointing for memory efficiency if supported
+            try:
                 model.gradient_checkpointing_enable()
-                logger.info("Enabled gradient checkpointing")
+                logger.info("Gradient checkpointing enabled")
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Gradient checkpointing not supported: {e}")
+                # Continue without gradient checkpointing
             
             # Resize token embeddings if needed
             if len(tokenizer) > model.config.vocab_size:
