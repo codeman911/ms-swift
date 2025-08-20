@@ -27,8 +27,8 @@ if str(current_dir) not in sys.path:
 
 from model_registration import register_higgs_audio_models
 from dataset_registration import register_higgs_audio_datasets
-from trainer import HiggsAudioTrainer
-from collator import HiggsAudioCollator
+import trainer_plugin  # Import to register the plugin
+import template  # Import to register the template
 
 logger = get_logger()
 
@@ -51,14 +51,9 @@ def register_higgs_audio_all():
     logger.info("📊 Registering Higgs-Audio datasets...")
     register_higgs_audio_datasets()
     
-    # Register trainer in Swift's trainer registry
-    logger.info("🎯 Registering HiggsAudioTrainer...")
-    from swift.trainers.trainer_factory import TrainerFactory
-    TrainerFactory.TRAINER_MAPPING['higgs-audio-trainer'] = HiggsAudioTrainer
-
-    # Register the custom template - import to trigger registration
-    logger.info("📋 Registering HiggsAudioTemplate...")
-    import template  # This will trigger the register_template call
+    # Trainer plugin and template are auto-registered on import
+    logger.info("🎯 HiggsAudioTrainerPlugin registered")
+    logger.info("📋 HiggsAudioTemplate registered")
     
     logger.info("=" * 60)
     logger.info("✅ Higgs-Audio registration complete!")

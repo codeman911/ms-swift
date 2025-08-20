@@ -1,55 +1,75 @@
 #!/bin/bash
 
-# Higgs-Audio V2 Training with Rewritten Plugins
-# Uses original boson_multimodal components via MS-SWIFT plugins
+# Higgs-Audio Training Script following CUSTOM_TTS.md specifications
+# This script implements the complete training pipeline as documented
 
 set -e
 
-echo "🎵 Starting Higgs-Audio V2 Training with Original Wrapper Plugins..."
+echo "🎵 Starting Higgs-Audio Training Pipeline (CUSTOM_TTS.md compliant)..."
+echo "================================================="
 
 # Environment setup
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export OMP_NUM_THREADS=16
 export PYTHONPATH="${PWD}:${PWD}/higgs-audio:${PYTHONPATH}"
 
-# Force HuggingFace Hub
+# Force HuggingFace Hub as per documentation
 export USE_HF=1
 export USE_MODELSCOPE_HUB=0
 
-# Dataset path (update to your actual dataset)
-DATASET_PATH="temp_chatml_samples.jsonl"
+# Training configuration
+DATASET_PATH="${1:-temp_chatml_samples.jsonl}"  # Accept dataset path as argument
+OUTPUT_DIR="${2:-./output_higgs_final}"  # Accept output dir as argument
+MODEL_PATH="${3:-/Users/vikram.solanki/Projects/tts/ms-swift/higgs-audio}"  # Local model path
 
-echo "📦 Using plugins: model_registration, collator, trainer, dataset_registration"
-echo "📊 Dataset: $DATASET_PATH"
-echo "🤖 Model: bosonai/higgs-audio-v2-generation-3B-base"
+echo "📦 Configuration:"
+echo "  - Model: Higgs-Audio V2 (from $MODEL_PATH)"
+echo "  - Dataset: $DATASET_PATH"
+echo "  - Output: $OUTPUT_DIR"
+echo "  - Template: higgs-audio-chatml"
+echo "  - Plugins: All components from CUSTOM_TTS.md"
 
-# Register plugins and start training
+# Main training command following CUSTOM_TTS.md specifications
 swift sft \
-    --model_type higgs-audio-v2-generation-3b-base \
-    --model bosonai/higgs-audio-v2-generation-3B-base \
-    --template chatml \
+    --model_type higgs-audio \
+    --model_id_or_path "$MODEL_PATH" \
+    --template higgs-audio-chatml \
     --custom_register_path plugins/register.py \
-    --dataset higgs-audio-tts:$DATASET_PATH \
+    --dataset higgs_audio:"$DATASET_PATH" \
     --train_type lora \
-    --target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
-    --lora_rank 16 \
-    --lora_alpha 32 \
+    --lora_target_modules ALL \
+    --lora_rank 8 \
+    --lora_alpha 16 \
     --lora_dropout 0.05 \
-    --per_device_train_batch_size 2 \
-    --gradient_accumulation_steps 8 \
-    --learning_rate 1e-4 \
-    --warmup_steps 500 \
-    --max_steps 5000 \
+    --per_device_train_batch_size 1 \
+    --gradient_accumulation_steps 16 \
+    --learning_rate 5e-5 \
+    --warmup_ratio 0.1 \
+    --num_train_epochs 3 \
     --bf16 true \
     --gradient_checkpointing true \
-    --save_steps 1000 \
+    --save_strategy steps \
+    --save_steps 500 \
     --logging_steps 10 \
-    --output_dir ./output_higgs_plugins \
-    --logging_dir ./logs_higgs_plugins \
+    --evaluation_strategy no \
+    --output_dir "$OUTPUT_DIR" \
+    --logging_dir "${OUTPUT_DIR}/logs" \
     --report_to tensorboard \
-    --run_name higgs_audio_v2_plugins \
+    --run_name higgs_audio_custom_tts \
     --remove_unused_columns false \
-    --dataloader_num_workers 8 \
-    --seed 42
+    --dataloader_num_workers 4 \
+    --preprocessing_num_workers 4 \
+    --seed 42 \
+    --ddp_find_unused_parameters false \
+    --logging_first_step true \
+    --save_total_limit 3 \
+    --load_best_model_at_end false
 
-echo "✅ Training completed!"
+echo "================================================="
+echo "✅ Training completed successfully!"
+echo "📁 Model saved to: $OUTPUT_DIR"
+echo "📊 Logs available at: ${OUTPUT_DIR}/logs"
+echo ""
+echo "To run inference with the trained model:"
+echo "  swift infer --model_type higgs-audio --ckpt_dir $OUTPUT_DIR"
+echo "=================================================="

@@ -22,13 +22,18 @@ from transformers import AutoTokenizer, AutoConfig, AutoModel
 
 # Import MS-SWIFT components
 from swift.llm import ModelType, register_model, ModelMeta, ModelGroup, Model
+from swift.llm.utils.model import ModelArch
+from swift.llm.constant import LLMModelType
 from swift.utils import get_logger
 
 logger = get_logger()
 
 # Register Higgs-Audio model with transformers Auto classes
-AutoConfig.register("higgs_audio", HiggsAudioConfig)
-AutoModel.register(HiggsAudioConfig, HiggsAudioModel)
+try:
+    AutoConfig.register("higgs_audio", HiggsAudioConfig)
+    AutoModel.register(HiggsAudioConfig, HiggsAudioModel)
+except Exception:
+    pass  # Already registered
 
 # LoRA target modules for Higgs-Audio V2 (from original model architecture)
 HIGGS_LORA_TARGET_MODULES = [
@@ -53,44 +58,26 @@ HIGGS_LORA_TARGET_MODULES = [
 ]
 
 def register_higgs_audio_models():
-    """Register Higgs-Audio models with MS-SWIFT using original wrapper classes."""
+    """Register Higgs-Audio models with MS-SWIFT following CUSTOM_TTS.md specifications."""
     
-    # Define model configurations
-    model_configs = [
-        {
-            "model_type": "higgs-audio-v2-generation-3b-base",
-            "model_id": "bosonai/higgs-audio-v2-generation-3B-base",
-            "revision": "main",
-        },
-        {
-            "model_type": "higgs-audio-v2-tokenizer",
-            "model_id": "bosonai/higgs-audio-v2-tokenizer",
-            "revision": "main",
-        },
-    ]
-    
-    for config in model_configs:
-        register_higgs_audio_model(
-            model_type=config["model_type"],
-            model_id=config["model_id"],
-            revision=config.get("revision", "main"),
-        )
-        logger.info(f"Registered Higgs-Audio model: {config['model_type']}")
+    # Register main model as per CUSTOM_TTS.md
+    register_model(
+        ModelMeta(
+            model_type='higgs-audio',  # Unique identifier as per doc
+            model_groups=[Model('bosonai/higgs-audio-v2-generation-3B-base')],  # HF model name
+            template='higgs-audio-chatml',  # Custom template we'll register
+            get_model_tokenizer=get_higgs_model_tokenizer,  # Function to load model/tokenizer
+            model_arch=ModelArch.llama,  # Base architecture
+            is_multimodal=True,  # Handles audio
+            requires_attention_mask=True,
+            tags=['audio', 'tts', 'voice-cloning'],
+            lora_target_modules=HIGGS_LORA_TARGET_MODULES,
+        ),
+        exist_ok=True
+    )
+    logger.info("Registered Higgs-Audio model with MS-SWIFT")
 
-def register_higgs_audio_model(
-    model_type: str,
-    model_id: str,
-    revision: str = "main",
-):
-    """Register a single Higgs-Audio model with MS-SWIFT.
-    
-    Args:
-        model_type: The model type identifier
-        model_id: The HuggingFace model ID
-        revision: The model revision
-    """
-    
-    def get_model_tokenizer(
+def get_higgs_model_tokenizer(
         model_dir: str,
         model_info=None,
         torch_dtype: Optional[torch.dtype] = None,
@@ -98,7 +85,7 @@ def register_higgs_audio_model(
         load_model: bool = True,
         **kwargs,
     ) -> Tuple[Optional[HiggsAudioModel], Any]:
-        """Load Higgs-Audio model and tokenizer using original wrapper classes.
+        """Load Higgs-Audio model and tokenizer as per CUSTOM_TTS.md specifications.
         
         Args:
             model_dir: Directory containing the model
@@ -119,47 +106,23 @@ def register_higgs_audio_model(
         elif not hasattr(torch_dtype, 'is_floating_point'):  # If it's not a torch dtype
             torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         
-        # Load text tokenizer (not the audio tokenizer)
-        # The load_higgs_audio_tokenizer loads the audio tokenizer, we need the text tokenizer
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                model_dir,
-                trust_remote_code=True,
-                use_fast=False,
-            )
-            logger.info(f"Loaded text tokenizer from {model_dir}")
-        except Exception as e:
-            logger.error(f"Failed to load tokenizer: {e}")
-            raise e
-            
-        # Load audio tokenizer separately for later use - skip for main model, use separate tokenizer model
-        try:
-            # The main generation model doesn't contain audio tokenizer files
-            # Audio tokenizer should be loaded from bosonai/higgs-audio-v2-tokenizer separately
-            logger.info("Audio tokenizer should be loaded separately from bosonai/higgs-audio-v2-tokenizer")
-            tokenizer.audio_tokenizer = None
-        except Exception as e:
-            logger.warning(f"Audio tokenizer note: {e}")
-            tokenizer.audio_tokenizer = None
+        # Load tokenizer using AutoTokenizer as per CUSTOM_TTS.md
+        logger.info(f"Loading Higgs-Audio tokenizer from {model_dir}")
+        tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
         
-        # Ensure special tokens are set
+        # Add Higgs-Audio special tokens
         special_tokens = [
-            "<|AUDIO|>", "<|AUDIO_OUT|>", 
-            "<|audio_bos|>", "<|audio_eos|>",
-            "<|DELAY|>"
+            '<|audio_bos|>', '<|audio_eos|>',
+            '<|audio_out_bos|>', '<|audio_out_eos|>',
+            '<|AUDIO|>', '<|AUDIO_OUT|>',
+            '<|DELAY|>'
         ]
+        tokenizer.add_special_tokens({'additional_special_tokens': special_tokens})
         
-        tokens_to_add = [t for t in special_tokens if t not in tokenizer.get_vocab()]
-        if tokens_to_add:
-            tokenizer.add_special_tokens({"additional_special_tokens": tokens_to_add})
-            logger.info(f"Added special tokens: {tokens_to_add}")
-        
-        # Set special token IDs as attributes
-        tokenizer.audio_in_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO|>")
-        tokenizer.audio_out_token_id = tokenizer.convert_tokens_to_ids("<|AUDIO_OUT|>")
-        tokenizer.audio_bos_token_id = tokenizer.convert_tokens_to_ids("<|audio_bos|>")
-        tokenizer.audio_eos_token_id = tokenizer.convert_tokens_to_ids("<|audio_eos|>")
-        tokenizer.delay_token_id = tokenizer.convert_tokens_to_ids("<|DELAY|>")
+        # Set padding token
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
         
         # Fix pad_token_id issue - MS-SWIFT requires this for data collation
         # Use the same pad_token_id as in Higgs-Audio config (128001 = eos_token_id)
@@ -196,10 +159,32 @@ def register_higgs_audio_model(
             # Note: Don't pass pad_token_id to model constructor as it's not a valid parameter
             # The model config already has the correct pad_token_id from the pretrained config
             
-            # Load model using Higgs-Audio model class
+            # Load Higgs-Audio model as per CUSTOM_TTS.md
+            logger.info(f"Loading Higgs-Audio model from {model_dir}")
+            
+            # Set default model kwargs
+            if model_kwargs is None:
+                model_kwargs = {}
+            
+            # Add required configurations for Higgs-Audio
+            model_kwargs.update({
+                'trust_remote_code': True,
+                'torch_dtype': torch_dtype or torch.bfloat16,
+                'device_map': 'auto',
+            })
+            
+            # Remove flash attention if not available
+            if 'attn_implementation' not in model_kwargs:
+                try:
+                    import flash_attn
+                    model_kwargs['attn_implementation'] = 'flash_attention_2'
+                except ImportError:
+                    logger.info("Flash attention not available, using default attention")
+            
+            # Load model using HiggsAudioModel from boson_multimodal
             model = HiggsAudioModel.from_pretrained(
                 model_dir,
-                **model_kwargs,
+                **model_kwargs
             )
             
             # Follow original Higgs-Audio patterns - no custom modifications

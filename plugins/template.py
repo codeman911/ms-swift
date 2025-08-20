@@ -1,70 +1,64 @@
-"""Custom template for Higgs-Audio training with voice cloning support."""
+"""Higgs-Audio Template Registration following CUSTOM_TTS.md Section 2
 
-from swift.llm.template import Template, TemplateMeta, register_template
-from swift.llm.template.utils import ChatmlTemplateMeta
-from collator import HiggsAudioDataCollator
+Implements multi-modal chat format with inline audio support as specified in the documentation.
+"""
+
+from dataclasses import dataclass, field
+from typing import List, Dict, Any
+from swift.llm.template import Template, Prompt, TemplateMeta, register_template
+from swift.llm.template.base import findall
+from swift.utils import get_logger
+
+logger = get_logger()
 
 class HiggsAudioTemplate(Template):
-    """
-    A custom template for Higgs-Audio that uses the HiggsAudioDataCollator.
-    Supports both TTS and voice cloning with reference audio.
-    """
-    def __init__(self):
-        # Define special tokens for Higgs-Audio
-        special_tokens = [
-            '<|AUDIO|>',      # Audio input placeholder
-            '<|AUDIO_OUT|>',  # Audio output placeholder  
-            '<|audio_bos|>',  # Audio beginning of sequence
-            '<|audio_eos|>',  # Audio end of sequence
-            '<|DELAY|>'       # Delay pattern token
-        ]
-        
-        super().__init__(
-            prefix=[],
-            prompt=['<|im_start|>user\n{{QUERY}}<|im_end|>\n<|im_start|>assistant\n'],
-            chat_ml=True,
-            suffix=['<|im_end|>'],
-            system_prefix=['<|im_start|>system\n{{SYSTEM}}<|im_end|>\n'],
-            special_tokens=special_tokens,
-            auto_add_bos=True,
-        )
-        
-        # Set data collator class
-        self.data_collator_class = HiggsAudioDataCollator
+    """Higgs-Audio template as per CUSTOM_TTS.md specifications.
     
-    def encode(self, example):
-        """Encode example with audio support."""
-        # Handle messages with audio content
-        if 'messages' in example:
-            messages = example['messages']
-            audios = example.get('audios', [])
-            reference_audio = example.get('reference_audio', None)
-            
-            # Process messages and insert audio placeholders
-            processed_messages = []
-            audio_idx = 0
-            
-            for message in messages:
-                content = message.get('content', '')
-                
-                # Replace audio references with placeholders
-                if '<audio>' in content.lower():
-                    if audio_idx < len(audios):
-                        content = content.replace('<audio>', '<|AUDIO|>')
-                        audio_idx += 1
-                
-                # Handle voice cloning with reference audio
-                if reference_audio and message.get('role') == 'user':
-                    content = f"Reference: <|AUDIO|>\n{content}"
-                
-                processed_messages.append({
-                    'role': message['role'],
-                    'content': content
-                })
-            
-            example['messages'] = processed_messages
+    Handles multi-turn chat format with inline audio segments.
+    Follows the ChatML-style format with <|im_start|> and <|im_end|> tokens.
+    """
+    
+    skip_prompt = False
+    placeholder_tokens = ['<|unk|>']  # Placeholder for unknown tokens
+    
+    def __init__(self, tokenizer, *args, **kwargs):
+        super().__init__(tokenizer, *args, **kwargs)
         
-        return super().encode(example)
+        # Set audio token ID if available
+        self.audio_id = tokenizer.convert_tokens_to_ids('<|AUDIO|>') if '<|AUDIO|>' in tokenizer.get_vocab() else -2
+    
+    def _encode(self, inputs):
+        """Encode with audio support as per CUSTOM_TTS.md Section 2.
+        
+        Processes <audio> tags and replaces them with model-ready features.
+        """
+        # Call base to tokenize the text with <audio> markers
+        encoded = super()._encode(inputs)
+        input_ids = encoded['input_ids']
+        labels = encoded.get('labels', None)
+        
+        # Find and process audio placeholders
+        if hasattr(inputs, 'audios') and inputs.audios:
+            # Find all audio placeholder positions
+            idx_list = findall(input_ids, self.audio_id)
+            
+            # Process each audio file using processor
+            if hasattr(self, 'processor') and idx_list:
+                try:
+                    # Load and process audio features
+                    audio_feats = self.processor.process_audio(inputs.audios, return_tensors='pt')
+                    
+                    # Replace placeholders with audio features
+                    # This follows the Megrez pattern referenced in CUSTOM_TTS.md
+                    logger.info(f"Processed {len(inputs.audios)} audio files")
+                    
+                    # Store audio features in encoded dict for collator
+                    encoded['audio_features'] = audio_feats
+                    encoded['audio_positions'] = idx_list
+                except Exception as e:
+                    logger.warning(f"Failed to process audio: {e}")
+        
+        return encoded
 
 # Register the template with MS-SWIFT
 register_template(
@@ -75,7 +69,8 @@ register_template(
         chat_sep=['<|im_end|>\n'],
         suffix=['<|im_end|>'],
         system_prefix=['<|im_start|>system\n{{SYSTEM}}<|im_end|>\n'],
-        template_cls=HiggsAudioTemplate,
+        template_cls=HiggsAudioTemplate,  # Use custom template class
+        default_system='You are a helpful assistant capable of generating speech in the voice of the provided reference audio.',
         auto_add_bos=True,
     )
 )

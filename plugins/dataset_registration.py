@@ -1,6 +1,6 @@
-"""
-Higgs-Audio Dataset Registration for MS-SWIFT
+"""Higgs-Audio Dataset Registration for MS-SWIFT following CUSTOM_TTS.md
 Handles dataset loading, ChatML formatting, and audio-text alignment
+Based on the specifications in CUSTOM_TTS.md Section 3
 """
 
 import os
@@ -11,23 +11,80 @@ from pathlib import Path
 from datasets import Dataset, load_dataset, Audio
 from swift.llm import register_dataset, DatasetMeta
 from swift.llm.dataset.preprocessor import AutoPreprocessor
-from preprocessor import HiggsAudioPreprocessor
+# from preprocessor import HiggsAudioPreprocessor  # Will use custom preprocessing
 from swift.utils import get_logger
 
 logger = get_logger()
 
 
-def register_higgs_audio_datasets():
-    """Register Higgs-Audio datasets with MS-SWIFT"""
+def higgs_preprocess(ds):
+    """Preprocess dataset as per CUSTOM_TTS.md Section 3"""
+    def map_sample(sample):
+        # Process messages according to CUSTOM_TTS.md format
+        messages = sample.get('messages', [])
+        if not messages:
+            return sample
+            
+        # Extract system, user, and assistant messages
+        sys_msg = messages[0].get('content', '') if messages[0].get('role') == 'system' else 'You are a helpful assistant.'
+        
+        # Process user message with multimodal content
+        user_content_list = messages[1].get('content', []) if len(messages) > 1 else []
+        user_text_parts = []
+        audio_urls = []
+        
+        if isinstance(user_content_list, list):
+            for item in user_content_list:
+                if isinstance(item, dict):
+                    if item.get('type') == 'text':
+                        user_text_parts.append(item.get('text', ''))
+                    elif item.get('type') == 'audio':
+                        audio_url = item.get('audio_url', '')
+                        if audio_url:
+                            user_text_parts.append(f'<audio>{audio_url}</audio>')
+                            audio_urls.append(audio_url)
+        elif isinstance(user_content_list, str):
+            user_text_parts.append(user_content_list)
+        
+        # Process assistant message
+        assistant_content_list = messages[2].get('content', []) if len(messages) > 2 else []
+        assistant_text_parts = []
+        
+        if isinstance(assistant_content_list, list):
+            for item in assistant_content_list:
+                if isinstance(item, dict):
+                    if item.get('type') == 'text':
+                        assistant_text_parts.append(item.get('text', ''))
+                    elif item.get('type') == 'audio':
+                        audio_url = item.get('audio_url', '')
+                        if audio_url:
+                            assistant_text_parts.append(f'<audio>{audio_url}</audio>')
+                            audio_urls.append(audio_url)
+        elif isinstance(assistant_content_list, str):
+            assistant_text_parts.append(assistant_content_list)
+        
+        # Build conversation list as per CUSTOM_TTS.md
+        conversations = [
+            {"from": "system", "value": sys_msg},
+            {"from": "user", "value": ' '.join(user_text_parts)},
+            {"from": "assistant", "value": ' '.join(assistant_text_parts)}
+        ]
+        
+        return {"conversations": conversations, "audios": audio_urls}
     
-    # Register standard Higgs-Audio training dataset
+    return ds.map(map_sample)
+
+def register_higgs_audio_datasets():
+    """Register Higgs-Audio datasets with MS-SWIFT as per CUSTOM_TTS.md"""
+    
+    # Register as specified in CUSTOM_TTS.md Section 3
     register_dataset(
         DatasetMeta(
-            dataset_name='higgs-audio-tts',
+            dataset_name='higgs_audio',  # Name as per doc
             tags=['audio', 'tts', 'voice-cloning', 'multimodal'],
-            preprocess_func=HiggsAudioPreprocessor(columns=['messages']),
+            preprocess_func=higgs_preprocess,  # Custom preprocessing
             load_function=load_higgs_audio_dataset,
-            split=['train']
+            split=['train', 'validation']  # Support both splits
         ),
         exist_ok=True
     )
@@ -37,7 +94,7 @@ def register_higgs_audio_datasets():
         DatasetMeta(
             dataset_name='higgs-voice-cloning',
             tags=['voice-cloning', 'zero-shot', 'tts'],
-            preprocess_func=HiggsAudioPreprocessor(columns=['messages']),
+            preprocess_func=higgs_preprocess,  # Use same preprocessing
             load_function=load_voice_cloning_dataset,
             split=['train']
         ),

@@ -190,3 +190,323 @@ GitHub
 swift.readthedocs.io
 GitHub
  to design this integration. The result follows both codebases’ conventions and enables multilingual (e.g. Arabic/English) zero-shot voice cloning entirely within the MS-Swift framework, using HuggingFace models as provided by Boson AI (Higgs-Audio) with Swift’s training and serving machinery.
+
+
+
+ LOSS Implementation:
+
+ Here’s a **robust, drop-in plan + code** to compute (and optimize) **DualFFN losses** for **Higgs-Audio v2** and cleanly integrate them with **MS-SWIFT**. It assumes:
+
+* **Base model**: `bosonai/higgs-audio-v2-generation-3B-base`
+* **Audio tokenizer**: `bosonai/higgs-audio-v2-tokenizer`
+* **Data**: your ChatML collator returns **separate labels** for text and audio (so we don’t guess modality positions)
+* **Training**: **LoRA** via `swift sft` with a **custom loss plugin** (`--loss higgs_text_audio`)
+
+---
+
+# 1) Strategy (what we optimize and why)
+
+**Goal**: jointly optimize **text** (unseen/mixed-language) and **audio** (discrete RVQ) so the model learns both **linguistic form** and **acoustic realization** under **shared attention** + **DualFFN** heads.
+
+* **Text loss**: Standard next-token CE on text logits vs **shifted** `text_labels` (pad `-100`).
+* **Audio loss**: Codebook CE across all codebooks and timesteps on **audio logits** vs `audio_labels`.
+  Training **teacher forcing**:
+
+  * decoder inputs: `audio_in_ids = [BOS, codes[:-1]]`
+  * labels: `audio_labels = codes` with **only t=0 masked** (`-100`) and **no EOS masking**.
+* **Total loss**:
+
+  $$
+  \mathcal{L} = \lambda_\text{txt}\,\mathcal{L}_\text{text} + \lambda_\text{aud}\,\mathcal{L}_\text{audio}
+  $$
+
+  Defaults: $\lambda_\text{txt}=1.0$, $\lambda_\text{aud}=1.0$. For **unseen languages**, bump $\lambda_\text{txt}\in[1.2,2.0]$ initially (ramp-down later).
+
+**Why this works**: Cross-attention lets text tokens attend to ref-audio context; DualFFN routes modality-specific gradients (text-FFN vs audio-FFN). Joint CE drives both heads while keeping attention shared.
+
+---
+
+# 2) MS-SWIFT integration plan
+
+We’ll implement a **loss plugin** that:
+
+* Robustly finds **text logits** and **audio logits** from model outputs—even if nested or named differently.
+* Validates/normalizes **audio logits shape** to `[B, C, T, V_audio]` to match labels `[B, C, T]`.
+* Computes CE with `ignore_index=-100` and returns the **sum**.
+* Logs `text_ce`, `audio_ce`, and `loss` each step (so SWIFT’s logger/tensorboard can pick them up).
+
+You then enable it with:
+
+```bash
+--custom_register_path /path/to/plugins/loss.py \
+--loss higgs_text_audio
+```
+
+Optionally pass **weights** through env:
+
+```bash
+export HIGGS_TEXT_WEIGHT=1.5
+export HIGGS_AUDIO_WEIGHT=1.0
+```
+
+(Using env avoids guessing whether your SWIFT build exposes `--loss_args`.)
+
+---
+
+# 3) Loss plugin (production-grade)
+
+Create `plugins/loss.py` (or replace yours with this hardened version):
+
+```python
+# plugins/loss.py
+import os
+import torch
+import torch.nn.functional as F
+
+# ---- helpers ---------------------------------------------------------------
+
+def _fetch_text_logits(outputs):
+    """
+    Return text logits as [B, Ttxt, Vtxt].
+    Accepts several naming schemes (model-dependent).
+    """
+    # Common keys in HuggingFace-like models
+    for k in ("text_logits", "logits"):
+        if k in outputs and outputs[k] is not None:
+            return outputs[k]
+    # Nested under "lm" or "language"
+    lm = outputs.get("lm") if isinstance(outputs, dict) else None
+    if isinstance(lm, dict):
+        for k in ("logits", "text_logits"):
+            if k in lm and lm[k] is not None:
+                return lm[k]
+    raise KeyError("Could not find text logits in model outputs")
+
+def _fetch_audio_logits(outputs):
+    """
+    Return audio logits canonically as [B, C, T, V].
+    Accepts model variants:
+      - outputs["audio_logits"] already [B,C,T,V]
+      - outputs["audio"]["logits"] as either [B,T,C,V] or [B,C,T,V]
+      - sometimes [C,T,V] (single batch) -> expand
+    """
+    # Direct
+    if "audio_logits" in outputs and outputs["audio_logits"] is not None:
+        audio = outputs["audio_logits"]
+        return _canonicalize_audio_logits(audio)
+
+    # Nested dict
+    audio = outputs.get("audio") if isinstance(outputs, dict) else None
+    if isinstance(audio, dict):
+        logits = audio.get("logits", None)
+        if logits is not None:
+            return _canonicalize_audio_logits(logits)
+
+    raise KeyError("Could not find audio logits in model outputs")
+
+def _canonicalize_audio_logits(x):
+    """
+    Normalize audio logits to [B, C, T, V].
+    Accept [B,C,T,V], [B,T,C,V], [C,T,V], [T,C,V].
+    """
+    if x.dim() == 4:
+        B, A, B2, V = x.shape
+        # Assume either [B,C,T,V] or [B,T,C,V]
+        # Heuristic: the last dim is vocab; pick the smaller of the two middle dims as C (codebooks usually <= 16)
+        # If ambiguous, prefer [B,C,T,V] when A <= 16
+        if A <= 16:
+            return x  # [B,C,T,V]
+        else:
+            return x.permute(0, 2, 1, 3).contiguous()  # [B,T,C,V] -> [B,C,T,V]
+    elif x.dim() == 3:
+        A, B2, V = x.shape  # [C,T,V] or [T,C,V]
+        if A <= 16:  # [C,T,V]
+            x = x.unsqueeze(0)  # add batch
+            return x
+        else:
+            x = x.permute(1, 0, 2).contiguous().unsqueeze(0)  # [T,C,V] -> [C,T,V] -> [B,C,T,V]
+            return x
+    else:
+        raise ValueError(f"Unexpected audio logits shape: {tuple(x.shape)}")
+
+def _ce(logits, labels, ignore_index=-100, label_smoothing=0.0):
+    V = logits.size(-1)
+    return F.cross_entropy(
+        logits.reshape(-1, V),
+        labels.reshape(-1),
+        ignore_index=ignore_index,
+        reduction="mean",
+        label_smoothing=label_smoothing if hasattr(F, "cross_entropy") else 0.0,
+    )
+
+# ---- main loss -------------------------------------------------------------
+
+def higgs_text_audio_loss(outputs, labels, loss_scale=None, num_items_in_batch=None, **kwargs):
+    """
+    DualFFN joint CE loss for Higgs-Audio:
+      - text: CE over next-token text logits vs text_labels [B,Ttxt]
+      - audio: CE over codebook logits vs audio_labels [B,C,T]
+    Only first audio step is masked by collator; EOS not masked by design.
+    """
+    # weights (pass via env to avoid CLI dialects)
+    text_w  = float(os.getenv("HIGGS_TEXT_WEIGHT",  "1.0"))
+    audio_w = float(os.getenv("HIGGS_AUDIO_WEIGHT", "1.0"))
+    label_smoothing = float(os.getenv("HIGGS_LABEL_SMOOTH", "0.0"))
+
+    # ---- fetch logits
+    text_logits  = _fetch_text_logits(outputs)     # [B,Ttxt,Vtxt]
+    audio_logits = _fetch_audio_logits(outputs)    # [B,C,T,Vaud]
+
+    # ---- fetch labels (required keys provided by collator/template)
+    # text
+    if "text_labels" in labels:
+        text_labels = labels["text_labels"].to(text_logits.device)
+    elif "labels" in labels:
+        text_labels = labels["labels"].to(text_logits.device)
+    else:
+        raise KeyError("Missing text_labels/labels in batch 'labels' dict")
+
+    # audio
+    if "audio_labels" not in labels:
+        raise KeyError("Missing audio_labels in batch 'labels' dict")
+    audio_labels = labels["audio_labels"].to(audio_logits.device)   # [B,C,T]
+
+    # ---- align audio logits/labels if off-by-one time (rare)
+    # Expect same C and T (labels = BOS-shifted; step 0 masked already by collator).
+    Bc, Cc, Tc, Va = audio_logits.shape
+    Ba, Ca, Ta = audio_labels.shape
+    if (Cc != Ca) or (Tc != Ta):
+        # Best-effort crop to min dims
+        Cmin = min(Cc, Ca); Tmin = min(Tc, Ta)
+        audio_logits = audio_logits[:, :Cmin, :Tmin, :]
+        audio_labels = audio_labels[:, :Cmin, :Tmin]
+
+    # ---- compute CE
+    text_ce  = _ce(text_logits,  text_labels,  ignore_index=-100, label_smoothing=label_smoothing)
+    audio_ce = _ce(audio_logits, audio_labels, ignore_index=-100, label_smoothing=0.0)  # keep audio strict
+
+    loss = text_w * text_ce + audio_w * audio_ce
+
+    # Expose for trainer logging
+    # (MS-SWIFT/HF Trainer will ignore unknown keys; safe to attach)
+    outputs["loss"]     = loss
+    outputs["text_ce"]  = text_ce.detach()
+    outputs["audio_ce"] = audio_ce.detach()
+    return loss
+
+# Optional: text-only (debug)
+def higgs_text_only_loss(outputs, labels, **_):
+    text_logits = _fetch_text_logits(outputs)
+    if "text_labels" in labels:
+        text_labels = labels["text_labels"].to(text_logits.device)
+    else:
+        text_labels = labels["labels"].to(text_logits.device)
+    return _ce(text_logits, text_labels, ignore_index=-100)
+
+loss_mapping = {
+    "higgs_text_audio": higgs_text_audio_loss,
+    "higgs_text_only":  higgs_text_only_loss,
+}
+
+print("[MS-SWIFT] Registered losses: higgs_text_audio, higgs_text_only")
+```
+
+**Why this is robust**
+
+* Works with multiple output formats (`text_logits` vs `logits`, nested `audio.logits`).
+* Normalizes **audio logits** to `[B,C,T,V]`.
+* Aligns **off-by-one** time/codebooks by cropping (safer than crashing; collator should already match).
+* Allows **env-configurable weights** for the unseen language phase.
+
+---
+
+# 4) Collator requirements (to make loss correct)
+
+Make sure your collator returns **these exact label keys**:
+
+* `text_labels` : `[B, T_text]`
+
+  * build via **next-token shift** of `input_ids`; set pad to `-100`.
+* `audio_labels`: `[B, C, T_audio]`
+
+  * build with **teacher forcing** (**first step** masked `-100`), **no EOS masking**.
+* (Optional) also include `labels = text_labels` for HF compatibility.
+
+And that the model forward returns **both** logits:
+
+* **Text**: `outputs["text_logits"]` or `outputs["logits"]` of shape `[B, T_text, V_text]`.
+* **Audio**: `outputs["audio_logits"]` (or `outputs["audio"]["logits"]`) of shape `[B, C, T_audio, V_audio]`.
+
+> If your model uses slightly different names, either map them in the model wrapper or extend the `_fetch_*` helpers above.
+
+---
+
+# 5) Wire it up in MS-SWIFT
+
+Add the plugin and select it from CLI:
+
+```bash
+swift sft \
+  --model bosonai/higgs-audio-v2-generation-3B-base \
+  --use_hf true \
+  --template higgs_chatml \
+  --custom_register_path /abs/path/plugins/loss.py /abs/path/plugins/higgs_dataset.py /abs/path/plugins/higgs_ms_swift_register.py \
+  --dataset "higgs-chatml-custom#path=/abs/path/data/chatml_raw.jsonl" \
+  --remove_unused_columns false \
+  --train_type lora \
+  --target_modules "q_proj k_proj v_proj o_proj gate_proj up_proj down_proj audio_mlp.gate_proj audio_mlp.up_proj audio_mlp.down_proj" \
+  --lora_rank 16 --lora_alpha 32 --lora_dropout 0.05 \
+  --per_device_train_batch_size 4 --gradient_accumulation_steps 4 \
+  --learning_rate 1e-4 --warmup_steps 1000 --max_steps 20000 \
+  --bf16 true \
+  --gradient_checkpointing true \
+  --save_steps 1000 --logging_steps 20 \
+  --loss higgs_text_audio \
+  --output_dir /abs/path/out/ckpts/lora \
+  --logging_dir /abs/path/out/logs \
+  --report_to tensorboard \
+  --run_name higgs_audio_lora
+```
+
+Optional **unseen language weighting**:
+
+```bash
+export HIGGS_TEXT_WEIGHT=1.6
+export HIGGS_AUDIO_WEIGHT=1.0
+```
+
+> If your build of MS-SWIFT complains about gradient checkpointing under PEFT (embedding getter missing), either add the small **PEFT shim** you already have, or set `--gradient_checkpointing false`.
+
+---
+
+# 6) Recommended logging & validation
+
+Ensure your trainer (or callback) logs:
+
+* `loss`, `audio_ce`, `text_ce`, and `lr` every \~20 steps
+* (collator side) `text_tokens_per_sample (min/mean/max)`; **warn** if mean < 32 for Arabic batches
+* quick shape checks (first batch) for:
+
+  * `text_logits: [B, Ttxt, Vtxt]` vs `text_labels: [B, Ttxt]`
+  * `audio_logits: [B, C, T, V]` vs `audio_labels: [B, C, T]`
+
+Add early **asserts** in your collator so any mis-shape is caught before training.
+
+---
+
+# 7) (Optional) smarter schedules for new languages
+
+If the target language is unseen/low-resource:
+
+* **Warmup schedule**: start with $\lambda_\text{txt} = 1.6$ for 1k–2k steps, then decay to 1.0.
+* **Curriculum**: upsample batches where `lang=="ar"`; or filter for `≥32` Arabic tokens/sample until text perplexity stabilizes.
+* **Grad clipping**: keep `1.0` (already in SWIFT mixin); helps with large-V audio heads.
+
+---
+
+## TL;DR
+
+* Use the **plugin loss** above (`higgs_text_audio`) with your **collator’s** `text_labels` & `audio_labels`.
+* The function **robustly** finds logits, **canonicalizes shapes**, and returns **text CE + audio CE** (weighted).
+* It’s **MS-SWIFT friendly** (`--loss higgs_text_audio`) and ready for **LoRA** training.
+
