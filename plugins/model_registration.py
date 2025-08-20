@@ -161,6 +161,12 @@ def register_higgs_audio_model(
         tokenizer.audio_eos_token_id = tokenizer.convert_tokens_to_ids("<|audio_eos|>")
         tokenizer.delay_token_id = tokenizer.convert_tokens_to_ids("<|DELAY|>")
         
+        # Fix pad_token_id issue - MS-SWIFT requires this for data collation
+        # Use the same pad_token_id as in Higgs-Audio config (128001 = eos_token_id)
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id  # 128001
+            logger.info(f"Set pad_token_id to {tokenizer.pad_token_id} (same as eos_token_id)")
+        
         model = None
         if load_model:
             # Prepare model kwargs - ensure it's a dictionary
@@ -185,6 +191,10 @@ def register_higgs_audio_model(
             # Add device map for multi-GPU
             if torch.cuda.device_count() > 1 and "device_map" not in model_kwargs:
                 model_kwargs["device_map"] = "auto"
+            
+            # Ensure pad_token_id is set in model config to match tokenizer
+            if "pad_token_id" not in model_kwargs:
+                model_kwargs["pad_token_id"] = 128001  # Same as Higgs-Audio default
             
             # Load model using Higgs-Audio model class
             model = HiggsAudioModel.from_pretrained(
