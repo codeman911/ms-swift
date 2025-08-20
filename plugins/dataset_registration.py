@@ -212,6 +212,9 @@ def load_higgs_audio_dataset(
     
     data_list = []
     
+    valid_samples = 0
+    skipped_samples = 0
+    
     with open(dataset_path, 'r', encoding='utf-8') as f:
         for line_idx, line in enumerate(f):
             # Skip empty lines and lines with only whitespace
@@ -224,14 +227,30 @@ def load_higgs_audio_dataset(
                 item = json.loads(line)
                 
                 # Skip items that don't have the expected structure
-                if not isinstance(item, dict) or 'messages' not in item:
+                if not isinstance(item, dict):
+                    skipped_samples += 1
                     continue
                 
                 # Convert to the expected format for MS-SWIFT
                 # Extract conversations from messages
                 conversations = []
                 
-                for msg in item['messages']:
+                # Handle both 'messages' and direct conversation format
+                if 'messages' in item:
+                    messages = item['messages']
+                elif 'conversations' in item:
+                    # Already in conversations format, convert to messages format
+                    messages = []
+                    for conv in item['conversations']:
+                        messages.append({
+                            'role': conv.get('from', ''),
+                            'content': conv.get('value', '')
+                        })
+                else:
+                    skipped_samples += 1
+                    continue
+                
+                for msg in messages:
                     if not isinstance(msg, dict):
                         continue
                         
@@ -258,8 +277,8 @@ def load_higgs_audio_dataset(
                         "value": str(content)
                     })
                 
-                # Only add items with valid conversations
-                if conversations:
+                # Add items even with minimal conversations
+                if conversations and len(conversations) >= 2:  # At least user and assistant
                     # Create the normalized item
                     normalized_item = {
                         "conversations": conversations
@@ -271,13 +290,20 @@ def load_higgs_audio_dataset(
                             normalized_item[key] = item[key]
                     
                     data_list.append(normalized_item)
+                    valid_samples += 1
+                else:
+                    skipped_samples += 1
                 
             except json.JSONDecodeError:
                 # Silently skip malformed JSON lines
+                skipped_samples += 1
                 continue
             except Exception:
                 # Silently skip any other errors
+                skipped_samples += 1
                 continue
+    
+    logger.info(f"Processed {valid_samples} valid samples, skipped {skipped_samples} invalid samples")
     
     # Create dataset from normalized data
     dataset = Dataset.from_list(data_list)
