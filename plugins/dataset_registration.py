@@ -232,66 +232,80 @@ def load_higgs_audio_dataset(
                 skipped_samples += 1
                 continue
             
-            # Convert to the expected format for MS-SWIFT
-            # Extract conversations from messages
-            conversations = []
-            
-            # Handle both 'messages' and direct conversation format
+            # MS-SWIFT expects 'messages' field, not 'conversations'
+            # Keep the original messages format that MS-SWIFT expects
             if 'messages' in item:
                 messages = item['messages']
+                
+                # Normalize multimodal content in messages
+                normalized_messages = []
+                for msg in messages:
+                    if not isinstance(msg, dict):
+                        continue
+                        
+                    role = msg.get('role', '')
+                    content = msg.get('content', '')
+                    
+                    # Handle multimodal content (list format)
+                    if isinstance(content, list):
+                        content_text = ""
+                        for part in content:
+                            if isinstance(part, dict):
+                                if part.get('type') == 'text':
+                                    content_text += part.get('text', '')
+                                elif part.get('type') == 'audio':
+                                    audio_url = part.get('audio_url', '')
+                                    if audio_url:
+                                        content_text += f"<audio>{audio_url}</audio>"
+                            elif isinstance(part, str):
+                                content_text += part
+                        content = content_text
+                    
+                    normalized_messages.append({
+                        "role": role,
+                        "content": str(content)
+                    })
+                
+                # Add items with valid messages
+                if normalized_messages and len(normalized_messages) >= 2:  # At least user and assistant
+                    # Create the normalized item with 'messages' field for MS-SWIFT
+                    normalized_item = {
+                        "messages": normalized_messages
+                    }
+                    
+                    # Add other fields if they exist
+                    for key in ['speaker', 'misc', 'audios']:
+                        if key in item:
+                            normalized_item[key] = item[key]
+                    
+                    data_list.append(normalized_item)
+                    valid_samples += 1
+                else:
+                    skipped_samples += 1
             elif 'conversations' in item:
-                # Already in conversations format, convert to messages format
+                # Convert conversations format to messages format
+                conversations = item['conversations']
                 messages = []
-                for conv in item['conversations']:
+                for conv in conversations:
                     messages.append({
                         'role': conv.get('from', ''),
                         'content': conv.get('value', '')
                     })
-            else:
-                skipped_samples += 1
-                continue
-            
-            for msg in messages:
-                if not isinstance(msg, dict):
-                    continue
+                
+                if messages and len(messages) >= 2:
+                    normalized_item = {
+                        "messages": messages
+                    }
                     
-                role = msg.get('role', '')
-                content = msg.get('content', '')
-                
-                # Handle multimodal content (list format)
-                if isinstance(content, list):
-                    content_text = ""
-                    for part in content:
-                        if isinstance(part, dict):
-                            if part.get('type') == 'text':
-                                content_text += part.get('text', '')
-                            elif part.get('type') == 'audio':
-                                audio_url = part.get('audio_url', '')
-                                if audio_url:
-                                    content_text += f"<audio>{audio_url}</audio>"
-                        elif isinstance(part, str):
-                            content_text += part
-                    content = content_text
-                
-                conversations.append({
-                    "from": role,
-                    "value": str(content)
-                })
-            
-            # Add items even with minimal conversations
-            if conversations and len(conversations) >= 2:  # At least user and assistant
-                # Create the normalized item
-                normalized_item = {
-                    "conversations": conversations
-                }
-                
-                # Add other fields if they exist
-                for key in ['speaker', 'misc', 'audios']:
-                    if key in item:
-                        normalized_item[key] = item[key]
-                
-                data_list.append(normalized_item)
-                valid_samples += 1
+                    # Add other fields if they exist
+                    for key in ['speaker', 'misc', 'audios']:
+                        if key in item:
+                            normalized_item[key] = item[key]
+                    
+                    data_list.append(normalized_item)
+                    valid_samples += 1
+                else:
+                    skipped_samples += 1
             else:
                 skipped_samples += 1
             

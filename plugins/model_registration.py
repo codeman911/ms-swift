@@ -158,12 +158,15 @@ def get_model_tokenizer(
                 if 'device_map' not in model_kwargs and torch.cuda.is_available():
                     model_kwargs['device_map'] = 'auto'
                 
-                # Remove unsupported parameters
+                # Remove unsupported parameters and handle attention implementation
                 # HiggsAudioModel doesn't support these parameters
-                unsupported_params = ['use_flash_attention_2', 'attn_implementation']
+                unsupported_params = ['use_flash_attention_2', 'attn_implementation', '_attn_implementation']
                 for param in unsupported_params:
                     if param in model_kwargs:
                         del model_kwargs[param]
+                
+                # Force eager attention to avoid 'sdpa' errors
+                model_kwargs['_attn_implementation'] = 'eager'
                 
                 model = HiggsAudioModel.from_pretrained(
                     model_dir,
