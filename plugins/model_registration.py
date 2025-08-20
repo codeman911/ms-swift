@@ -12,8 +12,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from swift.llm import (
     ModelType, Template, get_model_tokenizer, get_template,
-    get_default_template_type, register_model, ModelMeta, 
-    get_dataset, HfConfig, to_device, Model
+    register_model, ModelMeta, get_dataset, HfConfig, to_device, Model
 )
 from swift.utils import get_logger
 from swift.llm.utils.model import ModelArch, LoRATM, ModelKeys
