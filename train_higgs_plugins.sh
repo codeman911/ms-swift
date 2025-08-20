@@ -60,7 +60,7 @@ swift sft \
     --custom_register_path plugins/register.py \
     --dataset higgs_audio:"$DATASET_PATH" \
     --train_type lora \
-    --lora_target_modules ALL \
+    --lora_target_modules "q_proj k_proj v_proj o_proj gate_proj up_proj down_proj" \
     --lora_rank 8 \
     --lora_alpha 16 \
     --lora_dropout 0.05 \
@@ -74,19 +74,16 @@ swift sft \
     --save_strategy steps \
     --save_steps 500 \
     --logging_steps 10 \
-    --evaluation_strategy no \
     --output_dir "$OUTPUT_DIR" \
     --logging_dir "${OUTPUT_DIR}/logs" \
     --report_to tensorboard \
     --run_name higgs_audio_custom_tts \
     --remove_unused_columns false \
     --dataloader_num_workers 4 \
-    --preprocessing_num_workers 4 \
     --seed 42 \
     --ddp_find_unused_parameters false \
     --logging_first_step true \
-    --save_total_limit 3 \
-    --load_best_model_at_end false
+    --save_total_limit 3
 
 echo "================================================="
 echo "✅ Training completed successfully!"
