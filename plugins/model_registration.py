@@ -5,6 +5,7 @@ This module handles the registration of Higgs-Audio models with MS-SWIFT's model
 
 import os
 import sys
+import types
 from typing import Any, Dict, Optional, Tuple
 
 import torch

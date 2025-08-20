@@ -63,9 +63,9 @@ class HiggsChatMLTemplate(Template):
         
         return ' '.join(processed_parts)
     
-    def _swift_encode(self, inputs):
+    def encode(self, inputs):
         """Encode messages using MS-Swift's standard encoding.
-        
+
         This method processes messages with audio placeholders and delegates
         to the parent class for standard encoding.
         """
@@ -75,22 +75,22 @@ class HiggsChatMLTemplate(Template):
             for message in inputs.messages:
                 role = message.get('role', '')
                 content = message.get('content', '')
-                
+
                 # Process audio content
                 processed_content = self._process_audio_content(
-                    content, 
+                    content,
                     is_assistant=(role == 'assistant')
                 )
-                
+
                 processed_messages.append({
                     'role': role,
                     'content': processed_content
                 })
-            
+
             inputs.messages = processed_messages
-        
+
         # Call parent encoding
-        return super()._swift_encode(inputs)
+        return super().encode(inputs)
 
 
 def register_higgs_audio_template():

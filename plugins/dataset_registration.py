@@ -110,77 +110,28 @@ def load_higgs_audio_dataset(
     split: str = 'train',
     **kwargs
 ) -> Dataset:
-    """Load Higgs-Audio dataset from JSONL file with proper ChatML format.
-    
+    """Load Higgs-Audio dataset from a JSONL file using the HuggingFace loader.
+
     Args:
-        dataset_path: Path to the JSONL dataset file
-        split: Dataset split (train/val/test)
-        **kwargs: Additional arguments
-        
+        dataset_syntax: The dataset syntax object from MS-SWIFT.
+        dataset_meta: The dataset metadata.
+        split: The dataset split to load (e.g., 'train').
+        **kwargs: Additional arguments.
+
     Returns:
-        Dataset: Loaded dataset with proper multimodal ChatML format
+        A HuggingFace Dataset object.
     """
-    
-    # Extract dataset path from syntax
     if hasattr(dataset_syntax, 'subsets') and dataset_syntax.subsets:
         dataset_path = dataset_syntax.subsets[0]
     else:
         dataset_path = dataset_syntax.dataset
-    
-    logger.info(f"Loading Higgs-Audio dataset from {dataset_path}, split={split}")
-    
-    # Load JSONL file
-    data = []
-    with open(dataset_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.strip():
-                sample = json.loads(line.strip())
-                # Use original Higgs-Audio preprocessing to handle multimodal content properly
-                if 'messages' in sample:
-                    # Convert multimodal content to proper string format for MS-SWIFT
-                    processed_messages = []
-                    for message in sample['messages']:
-                        content = message.get('content', '')
-                        
-                        # Handle multimodal content - convert to text representation
-                        if isinstance(content, list):
-                            text_parts = []
-                            for item in content:
-                                if isinstance(item, dict):
-                                    if item.get('type') == 'text':
-                                        text_parts.append(item.get('text', ''))
-                                    elif item.get('type') == 'audio':
-                                        # Add audio placeholder with path info
-                                        audio_url = item.get('audio_url', '')
-                                        if audio_url:
-                                            text_parts.append(f'<|AUDIO:{audio_url}|>')
-                                        else:
-                                            text_parts.append('<|AUDIO|>')
-                                else:
-                                    # Handle string items in list
-                                    text_parts.append(str(item))
-                            content = ' '.join(text_parts)
-                        elif isinstance(content, dict):
-                            # Single content item
-                            if content.get('type') == 'text':
-                                content = content.get('text', '')
-                            elif content.get('type') == 'audio':
-                                audio_url = content.get('audio_url', '')
-                                content = f'<|AUDIO:{audio_url}|>' if audio_url else '<|AUDIO|>'
-                        
-                        processed_messages.append({
-                            'role': message.get('role', 'user'),
-                            'content': str(content)  # Ensure it's a string
-                        })
-                    
-                    sample['messages'] = processed_messages
-                
-                data.append(sample)
-    
-    # Convert to HuggingFace Dataset
-    dataset = Dataset.from_list(data)
-    
-    logger.info(f"Loaded {len(dataset)} samples from {dataset_path}")
+
+    logger.info(f"Loading Higgs-Audio dataset from: {dataset_path} (split: {split})")
+
+    # Use the standard HuggingFace dataset loader for JSONL files
+    dataset = load_dataset('json', data_files={split: dataset_path}, split=split)
+
+    logger.info(f"Successfully loaded {len(dataset)} samples for split '{split}'.")
     return dataset
 
 
