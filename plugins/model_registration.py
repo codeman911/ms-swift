@@ -192,20 +192,9 @@ def register_higgs_audio_model(
                 **model_kwargs,
             )
             
-            # Enable gradient checkpointing for memory efficiency if supported
-            try:
-                model.gradient_checkpointing_enable()
-                logger.info("Gradient checkpointing enabled")
-            except (ValueError, AttributeError) as e:
-                logger.warning(f"Gradient checkpointing not supported: {e}")
-                # Continue without gradient checkpointing
-            
-            # Resize token embeddings if needed
-            # Use text_config.vocab_size instead of config.vocab_size for HiggsAudioConfig
-            text_vocab_size = getattr(model.config, 'vocab_size', None) or model.config.text_config.vocab_size
-            if len(tokenizer) > text_vocab_size:
-                model.resize_token_embeddings(len(tokenizer))
-                logger.info(f"Resized token embeddings to {len(tokenizer)}")
+            # Follow original Higgs-Audio patterns - no custom modifications
+            model.eval()
+            logger.info("Model loaded and set to eval mode")
         
         return model, tokenizer
     
