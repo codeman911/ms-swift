@@ -193,8 +193,8 @@ def register_higgs_audio_model(
                 model_kwargs["device_map"] = "auto"
             
             # Ensure pad_token_id is set in model config to match tokenizer
-            if "pad_token_id" not in model_kwargs:
-                model_kwargs["pad_token_id"] = 128001  # Same as Higgs-Audio default
+            # Note: Don't pass pad_token_id to model constructor as it's not a valid parameter
+            # The model config already has the correct pad_token_id from the pretrained config
             
             # Load model using Higgs-Audio model class
             model = HiggsAudioModel.from_pretrained(
@@ -240,6 +240,51 @@ def register_higgs_audio_model(
                     delattr(self, '_require_grads_hook')
             
             model.disable_input_require_grads = types.MethodType(disable_input_require_grads, model)
+            
+            # Fix forward method compatibility with MS-SWIFT
+            # MS-SWIFT passes 'labels' parameter but HiggsAudioModel expects 'label_ids'
+            # Also need to compute loss since HiggsAudio returns separate logits
+            original_forward = model.forward
+            
+            def forward_with_labels_mapping(self, **kwargs):
+                # Map 'labels' to 'label_ids' for HiggsAudioModel compatibility
+                if 'labels' in kwargs:
+                    kwargs['label_ids'] = kwargs.pop('labels')
+                
+                # Get the original output
+                outputs = original_forward(**kwargs)
+                
+                # If we have label_ids, compute the loss for MS-SWIFT compatibility
+                if 'label_ids' in kwargs and kwargs['label_ids'] is not None:
+                    import torch.nn.functional as F
+                    
+                    label_ids = kwargs['label_ids']
+                    
+                    # Compute text loss (standard causal LM loss)
+                    if hasattr(outputs, 'logits') and outputs.logits is not None:
+                        # Shift labels for causal LM
+                        shift_logits = outputs.logits[..., :-1, :].contiguous()
+                        shift_labels = label_ids[..., 1:].contiguous()
+                        
+                        # Flatten for loss computation
+                        shift_logits = shift_logits.view(-1, shift_logits.size(-1))
+                        shift_labels = shift_labels.view(-1)
+                        
+                        # Compute cross entropy loss, ignore -100 labels
+                        text_loss = F.cross_entropy(
+                            shift_logits, 
+                            shift_labels, 
+                            ignore_index=-100,
+                            reduction='mean'
+                        )
+                        
+                        # Set the loss in the output for MS-SWIFT
+                        outputs.loss = text_loss
+                        outputs.llm_loss = text_loss
+                
+                return outputs
+            
+            model.forward = types.MethodType(forward_with_labels_mapping, model)
             
             logger.info("Model loaded and set to eval mode")
         
