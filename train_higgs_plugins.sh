@@ -55,6 +55,13 @@ echo "  - Output: $OUTPUT_DIR"
 echo "  - Template: higgs-audio-chatml"
 echo "  - Plugins: All components from CUSTOM_TTS.md"
 
+# Convert relative dataset path to absolute path
+if [[ ! "$DATASET_PATH" = /* ]]; then
+    # It's a relative path, convert to absolute
+    DATASET_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$DATASET_PATH"
+    echo "📝 Converted to absolute path: $DATASET_PATH"
+fi
+
 # Validate dataset path
 if [ ! -f "$DATASET_PATH" ]; then
     echo "❌ ERROR: Dataset file not found at $DATASET_PATH"
