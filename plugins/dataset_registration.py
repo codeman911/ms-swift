@@ -126,6 +126,10 @@ def load_higgs_audio_dataset(
     else:
         dataset_path = dataset_syntax.dataset
 
+    # Ensure dataset_path is not empty
+    if not dataset_path:
+        raise ValueError("Dataset path is empty. Please provide a valid dataset path.")
+        
     logger.info(f"Loading Higgs-Audio dataset from: {dataset_path} (split: {split})")
 
     # Convert to absolute path if it's a relative path

@@ -76,7 +76,7 @@ swift sft \
     --model "$MODEL_PATH" \
     --template higgs-audio-chatml \
     --custom_register_path plugins/register.py \
-    --dataset higgs_audio:"$DATASET_PATH" \
+    --dataset "higgs_audio:$DATASET_PATH" \
     --train_type lora \
     --lora_rank 8 \
     --lora_alpha 16 \
