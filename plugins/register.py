@@ -56,11 +56,9 @@ def register_higgs_audio_all():
     from swift.trainers.trainer_factory import TrainerFactory
     TrainerFactory.TRAINER_MAPPING['higgs-audio-trainer'] = HiggsAudioTrainer
 
-    # Register the custom template for the collator
+    # Register the custom template - import to trigger registration
     logger.info("📋 Registering HiggsAudioTemplate...")
-    from swift.llm import TEMPLATE_MAPPING
-    from template import HiggsAudioTemplate
-    TEMPLATE_MAPPING['higgs-audio-template'] = HiggsAudioTemplate
+    import template  # This will trigger the register_template call
     
     logger.info("=" * 60)
     logger.info("✅ Higgs-Audio registration complete!")
