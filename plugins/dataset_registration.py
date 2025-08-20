@@ -215,93 +215,90 @@ def load_higgs_audio_dataset(
     valid_samples = 0
     skipped_samples = 0
     
+    # Load the entire JSON file (it's a JSON array, not JSONL)
     with open(dataset_path, 'r', encoding='utf-8') as f:
-        for line_idx, line in enumerate(f):
-            # Skip empty lines and lines with only whitespace
-            line = line.strip()
-            if not line:
+        try:
+            json_data = json.load(f)
+            if not isinstance(json_data, list):
+                raise ValueError("Expected JSON array format")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON file: {e}")
+            raise
+    
+    for item_idx, item in enumerate(json_data):
+        try:
+            # Skip items that don't have the expected structure
+            if not isinstance(item, dict):
+                skipped_samples += 1
                 continue
-                
-            try:
-                # Try to parse the JSON
-                item = json.loads(line)
-                
-                # Skip items that don't have the expected structure
-                if not isinstance(item, dict):
-                    skipped_samples += 1
-                    continue
-                
-                # Convert to the expected format for MS-SWIFT
-                # Extract conversations from messages
-                conversations = []
-                
-                # Handle both 'messages' and direct conversation format
-                if 'messages' in item:
-                    messages = item['messages']
-                elif 'conversations' in item:
-                    # Already in conversations format, convert to messages format
-                    messages = []
-                    for conv in item['conversations']:
-                        messages.append({
-                            'role': conv.get('from', ''),
-                            'content': conv.get('value', '')
-                        })
-                else:
-                    skipped_samples += 1
-                    continue
-                
-                for msg in messages:
-                    if not isinstance(msg, dict):
-                        continue
-                        
-                    role = msg.get('role', '')
-                    content = msg.get('content', '')
-                    
-                    # Handle multimodal content (list format)
-                    if isinstance(content, list):
-                        content_text = ""
-                        for part in content:
-                            if isinstance(part, dict):
-                                if part.get('type') == 'text':
-                                    content_text += part.get('text', '')
-                                elif part.get('type') == 'audio':
-                                    audio_url = part.get('audio_url', '')
-                                    if audio_url:
-                                        content_text += f"<audio>{audio_url}</audio>"
-                            elif isinstance(part, str):
-                                content_text += part
-                        content = content_text
-                    
-                    conversations.append({
-                        "from": role,
-                        "value": str(content)
+            
+            # Convert to the expected format for MS-SWIFT
+            # Extract conversations from messages
+            conversations = []
+            
+            # Handle both 'messages' and direct conversation format
+            if 'messages' in item:
+                messages = item['messages']
+            elif 'conversations' in item:
+                # Already in conversations format, convert to messages format
+                messages = []
+                for conv in item['conversations']:
+                    messages.append({
+                        'role': conv.get('from', ''),
+                        'content': conv.get('value', '')
                     })
-                
-                # Add items even with minimal conversations
-                if conversations and len(conversations) >= 2:  # At least user and assistant
-                    # Create the normalized item
-                    normalized_item = {
-                        "conversations": conversations
-                    }
-                    
-                    # Add other fields if they exist
-                    for key in ['speaker', 'misc', 'audios']:
-                        if key in item:
-                            normalized_item[key] = item[key]
-                    
-                    data_list.append(normalized_item)
-                    valid_samples += 1
-                else:
-                    skipped_samples += 1
-                
-            except json.JSONDecodeError:
-                # Silently skip malformed JSON lines
+            else:
                 skipped_samples += 1
                 continue
-            except Exception:
-                # Silently skip any other errors
+            
+            for msg in messages:
+                if not isinstance(msg, dict):
+                    continue
+                    
+                role = msg.get('role', '')
+                content = msg.get('content', '')
+                
+                # Handle multimodal content (list format)
+                if isinstance(content, list):
+                    content_text = ""
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get('type') == 'text':
+                                content_text += part.get('text', '')
+                            elif part.get('type') == 'audio':
+                                audio_url = part.get('audio_url', '')
+                                if audio_url:
+                                    content_text += f"<audio>{audio_url}</audio>"
+                        elif isinstance(part, str):
+                            content_text += part
+                    content = content_text
+                
+                conversations.append({
+                    "from": role,
+                    "value": str(content)
+                })
+            
+            # Add items even with minimal conversations
+            if conversations and len(conversations) >= 2:  # At least user and assistant
+                # Create the normalized item
+                normalized_item = {
+                    "conversations": conversations
+                }
+                
+                # Add other fields if they exist
+                for key in ['speaker', 'misc', 'audios']:
+                    if key in item:
+                        normalized_item[key] = item[key]
+                
+                data_list.append(normalized_item)
+                valid_samples += 1
+            else:
                 skipped_samples += 1
-                continue
+            
+        except Exception:
+            # Silently skip any other errors
+            skipped_samples += 1
+            continue
     
     logger.info(f"Processed {valid_samples} valid samples, skipped {skipped_samples} invalid samples")
     
