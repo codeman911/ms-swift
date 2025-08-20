@@ -132,58 +132,14 @@ def register_higgs_audio_model(
             logger.error(f"Failed to load tokenizer: {e}")
             raise e
             
-        # Load audio tokenizer separately for later use
+        # Load audio tokenizer separately for later use - skip for main model, use separate tokenizer model
         try:
-            # Custom loading function that filters out unexpected parameters
-            def load_audio_tokenizer_safe(tokenizer_name_or_path, device="cuda"):
-                import json
-                import os
-                import torch
-                from huggingface_hub import snapshot_download
-                # Import from the correct path - higgs-audio directory is in the project root
-                import sys
-                import os
-                higgs_audio_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'higgs-audio')
-                if higgs_audio_path not in sys.path:
-                    sys.path.insert(0, higgs_audio_path)
-                from boson_multimodal.audio_processing.higgs_audio_tokenizer import HiggsAudioTokenizer
-                
-                is_local = os.path.exists(tokenizer_name_or_path)
-                if not is_local:
-                    tokenizer_path = snapshot_download(tokenizer_name_or_path)
-                else:
-                    tokenizer_path = tokenizer_name_or_path
-                    
-                config_path = os.path.join(tokenizer_path, "config.json")
-                model_path = os.path.join(tokenizer_path, "model.pth")
-                config = json.load(open(config_path))
-                
-                # Filter out parameters that HiggsAudioTokenizer doesn't accept
-                valid_params = {
-                    'n_filters', 'D', 'target_bandwidths', 'ratios', 'sample_rate',
-                    'bins', 'n_q', 'codebook_dim', 'normalize', 'causal',
-                    'semantic_techer', 'last_layer_semantic', 'merge_mode',
-                    'downsample_mode', 'semantic_mode', 'vq_scale', 'semantic_sample_rate'
-                }
-                
-                filtered_config = {k: v for k, v in config.items() if k in valid_params}
-                
-                model = HiggsAudioTokenizer(
-                    **filtered_config,
-                    device=device,
-                )
-                parameter_dict = torch.load(model_path, map_location=device)
-                model.load_state_dict(parameter_dict, strict=False)
-                model.to(device)
-                model.eval()
-                return model
-            
-            audio_tokenizer = load_audio_tokenizer_safe(model_dir)
-            # Store audio tokenizer as an attribute
-            tokenizer.audio_tokenizer = audio_tokenizer
-            logger.info(f"Loaded Higgs-Audio audio tokenizer from {model_dir}")
+            # The main generation model doesn't contain audio tokenizer files
+            # Audio tokenizer should be loaded from bosonai/higgs-audio-v2-tokenizer separately
+            logger.info("Audio tokenizer should be loaded separately from bosonai/higgs-audio-v2-tokenizer")
+            tokenizer.audio_tokenizer = None
         except Exception as e:
-            logger.warning(f"Failed to load Higgs-Audio audio tokenizer: {e}")
+            logger.warning(f"Audio tokenizer note: {e}")
             tokenizer.audio_tokenizer = None
         
         # Ensure special tokens are set
@@ -245,7 +201,9 @@ def register_higgs_audio_model(
                 # Continue without gradient checkpointing
             
             # Resize token embeddings if needed
-            if len(tokenizer) > model.config.vocab_size:
+            # Use text_config.vocab_size instead of config.vocab_size for HiggsAudioConfig
+            text_vocab_size = getattr(model.config, 'vocab_size', None) or model.config.text_config.vocab_size
+            if len(tokenizer) > text_vocab_size:
                 model.resize_token_embeddings(len(tokenizer))
                 logger.info(f"Resized token embeddings to {len(tokenizer)}")
         
