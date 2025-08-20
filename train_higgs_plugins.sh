@@ -55,7 +55,7 @@ echo "  - Plugins: All components from CUSTOM_TTS.md"
 # Main training command following CUSTOM_TTS.md specifications
 swift sft \
     --model_type higgs-audio \
-    --model_id_or_path "$MODEL_PATH" \
+    --model "$MODEL_PATH" \
     --template higgs-audio-chatml \
     --custom_register_path plugins/register.py \
     --dataset higgs_audio:"$DATASET_PATH" \
