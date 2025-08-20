@@ -18,8 +18,8 @@ export USE_HF=1
 export USE_MODELSCOPE_HUB=0
 
 # Parse command line arguments
-MODEL_PATH="/Users/vikram.solanki/Projects/tts/ms-swift/higgs-audio"  # Default model path
-DATASET_PATH="temp_chatml_samples.jsonl"  # Default dataset
+MODEL_PATH="../train-higgs-audio/model_file/"  # Default model path
+DATASET_PATH="lora_training_data_zr/chatml_fixed/val_chatml_samples.json"  # Default dataset
 OUTPUT_DIR="./output_higgs_final"  # Default output
 
 # Parse arguments

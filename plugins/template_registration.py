@@ -115,8 +115,8 @@ def register_higgs_audio_template():
             template_cls=HiggsChatMLTemplate
         )
         
-        # Register the template
-        register_template(template_meta)
+        # Register the template (idempotent on re-runs)
+        register_template(template_meta, exist_ok=True)
         
         logger.info(f"Successfully registered Higgs-Audio template: {TEMPLATE_TYPE}")
         return True
