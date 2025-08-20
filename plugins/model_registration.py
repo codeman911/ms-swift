@@ -197,23 +197,23 @@ def register_higgs_audio_model(
             
             # Fix gradient checkpointing compatibility
             # Override the transformers base class method that raises NotImplementedError
-            def enable_input_require_grads():
+            def enable_input_require_grads(self):
                 def make_inputs_require_grads(module, input, output):
                     output.requires_grad_(True)
                 
                 # Use the existing get_input_embeddings method from HiggsAudioModel
-                input_embeddings = model.get_input_embeddings()
-                model._require_grads_hook = input_embeddings.register_forward_hook(make_inputs_require_grads)
+                input_embeddings = self.get_input_embeddings()
+                self._require_grads_hook = input_embeddings.register_forward_hook(make_inputs_require_grads)
             
             # Bind the method to the model instance to override the base class method
             import types
             model.enable_input_require_grads = types.MethodType(enable_input_require_grads, model)
             
             # Also add disable method for completeness
-            def disable_input_require_grads():
-                if hasattr(model, '_require_grads_hook'):
-                    model._require_grads_hook.remove()
-                    delattr(model, '_require_grads_hook')
+            def disable_input_require_grads(self):
+                if hasattr(self, '_require_grads_hook'):
+                    self._require_grads_hook.remove()
+                    delattr(self, '_require_grads_hook')
             
             model.disable_input_require_grads = types.MethodType(disable_input_require_grads, model)
             
