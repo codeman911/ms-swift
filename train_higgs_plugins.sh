@@ -29,8 +29,7 @@ swift sft \
     --model bosonai/higgs-audio-v2-generation-3B-base \
     --template higgs-audio-template \
     --custom_register_path plugins/register.py \
-    --dataset higgs-audio-tts \
-    --dataset_path "$DATASET_PATH" \
+    --dataset higgs-audio-tts:$DATASET_PATH \
     --train_type lora \
     --target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
     --lora_rank 16 \

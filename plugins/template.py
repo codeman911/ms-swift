@@ -2,7 +2,7 @@
 Custom template for Higgs-Audio training with voice cloning support.
 """
 
-from swift.llm.utils.template import Template
+from swift.llm.template import Template
 from collator import HiggsAudioDataCollator
 
 class HiggsAudioTemplate(Template):
