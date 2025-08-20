@@ -1,31 +1,32 @@
 """Higgs-Audio model registration for MS-SWIFT.
 
-This module registers the Higgs-Audio model with MS-SWIFT's model registry.
+This module registers the Higgs-Audio models with MS-SWIFT's model registry.
 """
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
-from swift.llm import TemplateType
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
 from swift.utils import get_logger
+from ..register import register_model, ModelMeta, ModelGroup, Model
 from ..constant import ModelType
-from ..register import Model, ModelGroup, ModelMeta, register_model
+from ...template import TemplateType
+from ..model_arch import ModelArch
 
 logger = get_logger()
 
 
 def get_model_tokenizer_higgs_audio(
     model_dir: str,
-    torch_dtype: Optional[Any] = None,
-    model_kwargs: Optional[Dict[str, Any]] = None,
+    model_kwargs: Dict[str, Any],
     load_model: bool = True,
     **kwargs
-) -> Tuple[Any, Any]:
+) -> tuple:
     """Load Higgs-Audio model and tokenizer.
     
     Args:
-        model_dir: Directory containing the model
-        torch_dtype: Data type for model weights
+        model_dir: Path to model directory
         model_kwargs: Additional model arguments
         load_model: Whether to load the model
         **kwargs: Additional arguments
@@ -33,14 +34,11 @@ def get_model_tokenizer_higgs_audio(
     Returns:
         Tuple of (model, tokenizer)
     """
-    import torch
-    from transformers import AutoTokenizer, AutoModelForCausalLM
-    
-    # Initialize tokenizer
+    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         model_dir,
         trust_remote_code=True,
-        use_fast=False
+        **kwargs
     )
     
     # Add special tokens for audio
@@ -48,76 +46,77 @@ def get_model_tokenizer_higgs_audio(
         'additional_special_tokens': [
             '<|audio_start|>',
             '<|audio_end|>',
-            '<|audio_pad|>',
-            '<|ref_audio|>',
-            '<|target_audio|>'
+            '<|ref_audio_start|>',
+            '<|ref_audio_end|>',
+            '<|text_start|>',
+            '<|text_end|>',
         ]
     }
     tokenizer.add_special_tokens(special_tokens)
     
-    if not load_model:
-        return None, tokenizer
-    
-    # Initialize model
-    if model_kwargs is None:
-        model_kwargs = {}
-    
-    if torch_dtype is None:
-        torch_dtype = torch.float16
-    
-    model = AutoModelForCausalLM.from_pretrained(
-        model_dir,
-        torch_dtype=torch_dtype,
-        trust_remote_code=True,
-        **model_kwargs
-    )
-    
-    # Resize embeddings if needed
-    if len(tokenizer) > model.config.vocab_size:
-        model.resize_token_embeddings(len(tokenizer))
+    model = None
+    if load_model:
+        # Load model
+        model = AutoModelForCausalLM.from_pretrained(
+            model_dir,
+            trust_remote_code=True,
+            **model_kwargs
+        )
+        
+        # Resize token embeddings if needed
+        if len(tokenizer) > model.config.vocab_size:
+            model.resize_token_embeddings(len(tokenizer))
     
     return model, tokenizer
 
 
-# Create a custom ModelType for Higgs-Audio
+# Define Higgs-Audio model types
 class HiggsAudioModelType:
     higgs_audio_full = 'higgs-audio-full'
     higgs_audio_lora = 'higgs-audio-lora'
+    higgs_audio_qlora = 'higgs-audio-qlora'
 
 
-# Add to ModelType if possible
-if hasattr(ModelType, '__dict__'):
+# Register model types
+if not hasattr(ModelType, 'higgs_audio_full'):
     ModelType.higgs_audio_full = HiggsAudioModelType.higgs_audio_full
+if not hasattr(ModelType, 'higgs_audio_lora'):
     ModelType.higgs_audio_lora = HiggsAudioModelType.higgs_audio_lora
+if not hasattr(ModelType, 'higgs_audio_qlora'):
+    ModelType.higgs_audio_qlora = HiggsAudioModelType.higgs_audio_qlora
 
 
-# Register Higgs-Audio model
+# Register Higgs-Audio models
 register_model(
     ModelMeta(
-        HiggsAudioModelType.higgs_audio_full,
-        [
+        model_groups=[
             ModelGroup([
-                Model('Higgs-Audio-Full', 'higgs-audio/higgs-audio-full'),
-            ]),
+                Model('bosonai/higgs-audio-v2-generation-3B-base', 'bosonai/higgs-audio-v2-generation-3B-base'),
+                Model('bosonai/higgs-audio-v2-generation-7B-base', 'bosonai/higgs-audio-v2-generation-7B-base'),
+            ])
         ],
-        TemplateType.higgs_chatml,
-        get_model_tokenizer_higgs_audio,
-        architectures=['HiggsAudioForCausalLM'],
-        model_arch=None,
+        model_type=HiggsAudioModelType.higgs_audio_full,
+        get_model_tokenizer=get_model_tokenizer_higgs_audio,
+        template=TemplateType.higgs_chatml,
+        architectures=['HiggsAudioModel', 'LlamaForCausalLM'],
+        model_arch=ModelArch.llama,
         requires=['transformers>=4.37.0'],
-        tags=['audio', 'tts', 'voice-cloning'],
+        tags=['audio', 'tts', 'voice-cloning', 'multi-modal'],
     ))
 
+logger.info(f"Registered Higgs-Audio models: {HiggsAudioModelType.higgs_audio_full}")
+
 register_model(
     ModelMeta(
-        HiggsAudioModelType.higgs_audio_lora,
-        [
+        model_groups=[
             ModelGroup([
-                Model('Higgs-Audio-LoRA', 'higgs-audio/higgs-audio-lora'),
-            ]),
+                Model('bosonai/higgs-audio-v2-generation-3B-lora', 'bosonai/higgs-audio-v2-generation-3B-lora'),
+                Model('bosonai/higgs-audio-v2-generation-7B-lora', 'bosonai/higgs-audio-v2-generation-7B-lora'),
+            ])
         ],
-        TemplateType.higgs_chatml,
-        get_model_tokenizer_higgs_audio,
+        model_type=HiggsAudioModelType.higgs_audio_lora,
+        get_model_tokenizer=get_model_tokenizer_higgs_audio,
+        template=TemplateType.higgs_chatml,
         architectures=['HiggsAudioForCausalLM'],
         model_arch=None,
         requires=['transformers>=4.37.0'],
