@@ -5,17 +5,19 @@ This module handles the registration of Higgs-Audio models with MS-SWIFT's model
 
 import os
 import sys
-import types
 from typing import Any, Dict, Optional, Tuple
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from swift.llm import TemplateType
-from swift.llm.model import Model, ModelGroup, ModelMeta, register_model
-from swift.llm.model.constant import ModelType
-from swift.llm.model.model_arch import ModelArch
+from swift.llm import (
+    ModelType, Template, get_model_tokenizer, get_template,
+    get_default_template_type, register_model, ModelMeta, 
+    get_dataset, HfConfig, to_device, Model
+)
 from swift.utils import get_logger
+from swift.llm.utils.model import ModelArch, LoRATM, ModelKeys
+from swift.llm.constant import LLMModelType
 
 logger = get_logger()
 
