@@ -1,8 +1,7 @@
-"""
-Custom template for Higgs-Audio training with voice cloning support.
-"""
+"""Custom template for Higgs-Audio training with voice cloning support."""
 
-from swift.llm.template import Template
+from swift.llm.template import Template, TemplateMeta, register_template
+from swift.llm.template.utils import ChatmlTemplateMeta
 from collator import HiggsAudioDataCollator
 
 class HiggsAudioTemplate(Template):
@@ -66,3 +65,17 @@ class HiggsAudioTemplate(Template):
             example['messages'] = processed_messages
         
         return super().encode(example)
+
+# Register the template with MS-SWIFT
+register_template(
+    TemplateMeta(
+        template_type='higgs-audio-chatml',
+        prefix=[],
+        prompt=['<|im_start|>user\n{{QUERY}}<|im_end|>\n<|im_start|>assistant\n'],
+        chat_sep=['<|im_end|>\n'],
+        suffix=['<|im_end|>'],
+        system_prefix=['<|im_start|>system\n{{SYSTEM}}<|im_end|>\n'],
+        template_cls=HiggsAudioTemplate,
+        auto_add_bos=True,
+    )
+)
