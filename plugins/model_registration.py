@@ -21,9 +21,7 @@ from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_a
 from transformers import AutoTokenizer, AutoConfig, AutoModel
 
 # Import MS-SWIFT components
-from swift.llm import ModelType, register_model, ModelMeta, ModelGroup, Model
-from swift.llm.utils.model import ModelArch
-from swift.llm.constant import LLMModelType
+from swift.llm import register_model, ModelMeta, ModelGroup, Model, ModelType
 from swift.utils import get_logger
 
 logger = get_logger()
