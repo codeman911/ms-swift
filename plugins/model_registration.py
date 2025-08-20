@@ -16,13 +16,16 @@ if str(higgs_audio_path) not in sys.path:
     sys.path.insert(0, str(higgs_audio_path))
 
 try:
-    # Import original Higgs-Audio components
-    from boson_multimodal.model.higgs_audio import HiggsAudioForCausalLM
-    from transformers import AutoTokenizer
+    from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
+    from boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
+    from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
+    HIGGS_AVAILABLE = True
 except ImportError as e:
-    print(f"Warning: Could not import Higgs-Audio components: {e}")
-    # Fallback imports
-    from transformers import AutoTokenizer, AutoModelForCausalLM as HiggsAudioForCausalLM
+    logger.warning(f"Could not import Higgs-Audio components: {e}")
+    HIGGS_AVAILABLE = False
+    HiggsAudioModel = None
+    HiggsAudioConfig = None
+    load_higgs_audio_tokenizer = None
 
 # Import MS-SWIFT components
 from swift.llm.model.register import register_model, ModelMeta, ModelGroup, Model
@@ -48,7 +51,7 @@ def get_model_tokenizer(
         model_kwargs: Optional[Dict[str, Any]] = None,
         load_model: bool = True,
         **kwargs,
-    ) -> Tuple[Optional[HiggsAudioForCausalLM], Any]:
+    ) -> Tuple[Optional[HiggsAudioModel], Any]:
         """Load Higgs-Audio model and tokenizer as per CUSTOM_TTS.md specifications.
         
         Args:
@@ -132,7 +135,7 @@ def get_model_tokenizer(
             
             try:
                 # Load model with HiggsAudioForCausalLM
-                model = HiggsAudioForCausalLM.from_pretrained(
+                model = HiggsAudioModel.from_pretrained(
                     model_dir,
                     torch_dtype=torch_dtype or torch.bfloat16,
                     trust_remote_code=True,

@@ -10,10 +10,16 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 
 from swift.llm.template import (
-    Template, TemplateMeta, register_template,
-    Context, History, Messages, Prompt,
-    StopWords, TemplateType
+    Template,
+    TemplateMeta,
+    register_template,
+    Prompt,
+    Messages,
+    History,
+    encode_context,
+    StopWords
 )
+from swift.llm.template.utils import Context
 from swift.utils import get_logger
 
 logger = get_logger()
