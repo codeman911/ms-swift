@@ -23,7 +23,7 @@ from swift.utils import get_logger
 # Import all registration functions
 from model_registration import register_higgs_audio_models
 from template_registration import register_higgs_audio_template
-from dataset_registration import register_higgs_audio_dataset
+from dataset_registration import register_higgs_audio_datasets
 from loss_plugin import register_higgs_audio_loss_plugin
 
 logger = get_logger()
@@ -56,9 +56,10 @@ def register_all_higgs_audio_components():
         register_higgs_audio_template()
         logger.info("✅ Template registration complete")
         
-        # 3. Register dataset
-        logger.info("📊 Registering dataset loaders...")
-        register_higgs_audio_dataset()
+        # 3. Register datasets
+        logger.info("=" * 60)
+        logger.info("Registering Higgs-Audio datasets...")
+        dataset_success = register_higgs_audio_datasets()
         logger.info("✅ Dataset registration complete")
         
         # 4. Register loss plugin
