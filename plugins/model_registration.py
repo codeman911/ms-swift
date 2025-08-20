@@ -97,6 +97,7 @@ def register_higgs_audio_model(
     
     def get_model_tokenizer(
         model_dir: str,
+        model_info=None,
         torch_dtype: Optional[torch.dtype] = None,
         model_kwargs: Optional[Dict[str, Any]] = None,
         load_model: bool = True,
@@ -115,21 +116,36 @@ def register_higgs_audio_model(
             Tuple of (model, tokenizer)
         """
         
-        # Set default dtype
+        # Handle torch_dtype parameter - ensure it's a valid torch dtype
         if torch_dtype is None:
             torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        elif hasattr(torch_dtype, 'torch_dtype'):  # If it's a model_info object
+            torch_dtype = torch_dtype.torch_dtype
+        elif not hasattr(torch_dtype, 'is_floating_point'):  # If it's not a torch dtype
+            torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         
-        # Load Higgs-Audio tokenizer using original function
+        # Load text tokenizer (not the audio tokenizer)
+        # The load_higgs_audio_tokenizer loads the audio tokenizer, we need the text tokenizer
         try:
-            tokenizer = load_higgs_audio_tokenizer(model_dir)
-            logger.info(f"Loaded Higgs-Audio tokenizer from {model_dir}")
-        except Exception as e:
-            logger.warning(f"Failed to load Higgs-Audio tokenizer: {e}, falling back to AutoTokenizer")
             tokenizer = AutoTokenizer.from_pretrained(
                 model_dir,
                 trust_remote_code=True,
                 use_fast=False,
             )
+            logger.info(f"Loaded text tokenizer from {model_dir}")
+        except Exception as e:
+            logger.error(f"Failed to load tokenizer: {e}")
+            raise e
+            
+        # Load audio tokenizer separately for later use
+        try:
+            audio_tokenizer = load_higgs_audio_tokenizer(model_dir)
+            # Store audio tokenizer as an attribute
+            tokenizer.audio_tokenizer = audio_tokenizer
+            logger.info(f"Loaded Higgs-Audio audio tokenizer from {model_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to load Higgs-Audio audio tokenizer: {e}")
+            tokenizer.audio_tokenizer = None
         
         # Ensure special tokens are set
         special_tokens = [
