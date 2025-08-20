@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from swift.utils import get_logger
-from ..register import register_model, ModelMeta, ModelGroup, Model
+from ..register import register_model, ModelMeta, ModelGroup, Model, get_model_tokenizer_with_flash_attn
 from ..constant import ModelType
 from ...template import TemplateType
 from ..model_arch import ModelArch
@@ -19,6 +19,7 @@ logger = get_logger()
 
 def get_model_tokenizer_higgs_audio(
     model_dir: str,
+    model_info,
     model_kwargs: Dict[str, Any],
     load_model: bool = True,
     **kwargs
@@ -34,13 +35,11 @@ def get_model_tokenizer_higgs_audio(
     Returns:
         Tuple of (model, tokenizer)
     """
-    # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_dir,
-        trust_remote_code=True,
-        **kwargs
+    # Load via framework helper (handles dtype, device_map, attn_impl, etc.)
+    model, tokenizer = get_model_tokenizer_with_flash_attn(
+        model_dir, model_info, model_kwargs, load_model, **kwargs
     )
-    
+
     # Add special tokens for audio
     special_tokens = {
         'additional_special_tokens': [
@@ -52,21 +51,16 @@ def get_model_tokenizer_higgs_audio(
             '<|text_end|>',
         ]
     }
-    tokenizer.add_special_tokens(special_tokens)
-    
-    model = None
-    if load_model:
-        # Load model
-        model = AutoModelForCausalLM.from_pretrained(
-            model_dir,
-            trust_remote_code=True,
-            **model_kwargs
-        )
-        
-        # Resize token embeddings if needed
-        if len(tokenizer) > model.config.vocab_size:
-            model.resize_token_embeddings(len(tokenizer))
-    
+    num_new_tokens = tokenizer.add_special_tokens(special_tokens)
+
+    # Resize token embeddings if needed
+    if load_model and model is not None and num_new_tokens > 0:
+        try:
+            if hasattr(model, 'get_input_embeddings'):
+                model.resize_token_embeddings(len(tokenizer))
+        except Exception:
+            pass
+
     return model, tokenizer
 
 
@@ -96,10 +90,11 @@ register_model(
             ])
         ],
         model_type=HiggsAudioModelType.higgs_audio_full,
-        get_model_tokenizer=get_model_tokenizer_higgs_audio,
+        get_function=get_model_tokenizer_higgs_audio,
         template=TemplateType.higgs_chatml,
         architectures=['HiggsAudioModel', 'LlamaForCausalLM'],
         model_arch=ModelArch.llama,
+        is_multimodal=True,
         requires=['transformers>=4.37.0'],
         tags=['audio', 'tts', 'voice-cloning', 'multi-modal'],
     ))
@@ -115,10 +110,11 @@ register_model(
             ])
         ],
         model_type=HiggsAudioModelType.higgs_audio_lora,
-        get_model_tokenizer=get_model_tokenizer_higgs_audio,
+        get_function=get_model_tokenizer_higgs_audio,
         template=TemplateType.higgs_chatml,
         architectures=['HiggsAudioForCausalLM'],
         model_arch=None,
+        is_multimodal=True,
         requires=['transformers>=4.37.0'],
         tags=['audio', 'tts', 'voice-cloning', 'lora'],
     ))
