@@ -48,7 +48,8 @@ def register_higgs_audio_datasets():
 
 
 def load_higgs_audio_dataset(
-    dataset_path: str,
+    dataset_syntax,
+    dataset_meta,
     split: str = 'train',
     **kwargs
 ) -> Dataset:
@@ -62,6 +63,12 @@ def load_higgs_audio_dataset(
     Returns:
         Dataset: Loaded dataset with proper multimodal ChatML format
     """
+    
+    # Extract dataset path from syntax
+    if hasattr(dataset_syntax, 'subsets') and dataset_syntax.subsets:
+        dataset_path = dataset_syntax.subsets[0]
+    else:
+        dataset_path = dataset_syntax.dataset
     
     logger.info(f"Loading Higgs-Audio dataset from {dataset_path}, split={split}")
     
