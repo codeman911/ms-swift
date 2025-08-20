@@ -241,46 +241,77 @@ def register_higgs_audio_model(
             
             model.disable_input_require_grads = types.MethodType(disable_input_require_grads, model)
             
-            # Fix forward method compatibility with MS-SWIFT
-            # MS-SWIFT passes 'labels' parameter but HiggsAudioModel expects 'label_ids'
-            # Also need to compute loss since HiggsAudio returns separate logits
+            # Override forward method to handle 'labels' argument
             original_forward = model.forward
             
-            def forward_with_labels_mapping(self, **kwargs):
-                # Map 'labels' to 'label_ids' for HiggsAudioModel compatibility
-                if 'labels' in kwargs:
-                    kwargs['label_ids'] = kwargs.pop('labels')
+            def forward_with_labels_mapping(
+                input_ids=None,
+                attention_mask=None,
+                labels=None,  # MS-SWIFT passes 'labels'
+                **kwargs
+            ):
+                # Log forward method inputs for debugging
+                logger.info(f"[MODEL DEBUG] Forward called with:")
+                logger.info(f"[MODEL DEBUG]   input_ids: {input_ids.shape if input_ids is not None else 'None'}")
+                logger.info(f"[MODEL DEBUG]   attention_mask: {attention_mask.shape if attention_mask is not None else 'None'}")
+                logger.info(f"[MODEL DEBUG]   labels: {labels.shape if labels is not None else 'None'}")
                 
-                # Get the original output
-                outputs = original_forward(**kwargs)
+                # Log other kwargs
+                audio_related_keys = [k for k in kwargs.keys() if 'audio' in k.lower()]
+                for key in audio_related_keys:
+                    value = kwargs[key]
+                    if hasattr(value, 'shape'):
+                        logger.info(f"[MODEL DEBUG]   {key}: shape={value.shape}, dtype={value.dtype}")
+                    else:
+                        logger.info(f"[MODEL DEBUG]   {key}: type={type(value)}")
                 
-                # If we have label_ids, compute the loss for MS-SWIFT compatibility
-                if 'label_ids' in kwargs and kwargs['label_ids'] is not None:
-                    import torch.nn.functional as F
+                # Map 'labels' to 'label_ids' for HiggsAudioModel
+                if labels is not None:
+                    kwargs['label_ids'] = labels
+                
+                # Call original forward
+                outputs = original_forward(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    **kwargs
+                )
+                
+                # Log output structure
+                logger.info(f"[MODEL DEBUG] Model outputs:")
+                if hasattr(outputs, 'logits') and outputs.logits is not None:
+                    logger.info(f"[MODEL DEBUG]   logits shape: {outputs.logits.shape}")
+                if hasattr(outputs, 'audio_logits') and outputs.audio_logits is not None:
+                    logger.info(f"[MODEL DEBUG]   audio_logits shape: {outputs.audio_logits.shape}")
+                if hasattr(outputs, 'loss'):
+                    logger.info(f"[MODEL DEBUG]   loss: {outputs.loss}")
+                if hasattr(outputs, 'llm_loss'):
+                    logger.info(f"[MODEL DEBUG]   llm_loss: {outputs.llm_loss}")
+                if hasattr(outputs, 'audio_loss'):
+                    logger.info(f"[MODEL DEBUG]   audio_loss: {outputs.audio_loss}")
+                
+                # Compute loss if labels provided
+                if labels is not None and outputs.logits is not None:
+                    # Compute text loss (cross-entropy)
+                    from torch.nn import CrossEntropyLoss
+                    loss_fct = CrossEntropyLoss(ignore_index=-100)
                     
-                    label_ids = kwargs['label_ids']
+                    # Reshape for loss computation
+                    logits = outputs.logits
+                    batch_size, seq_len, vocab_size = logits.shape
+                    shift_logits = logits[:, :-1, :].contiguous()
+                    shift_labels = labels[:, 1:].contiguous()
                     
-                    # Compute text loss (standard causal LM loss)
-                    if hasattr(outputs, 'logits') and outputs.logits is not None:
-                        # Shift labels for causal LM
-                        shift_logits = outputs.logits[..., :-1, :].contiguous()
-                        shift_labels = label_ids[..., 1:].contiguous()
-                        
-                        # Flatten for loss computation
-                        shift_logits = shift_logits.view(-1, shift_logits.size(-1))
-                        shift_labels = shift_labels.view(-1)
-                        
-                        # Compute cross entropy loss, ignore -100 labels
-                        text_loss = F.cross_entropy(
-                            shift_logits, 
-                            shift_labels, 
-                            ignore_index=-100,
-                            reduction='mean'
-                        )
-                        
-                        # Set the loss in the output for MS-SWIFT
-                        outputs.loss = text_loss
-                        outputs.llm_loss = text_loss
+                    # Compute loss
+                    loss = loss_fct(
+                        shift_logits.view(-1, vocab_size),
+                        shift_labels.view(-1)
+                    )
+                    
+                    logger.info(f"[MODEL DEBUG] Computed text loss: {loss.item()}")
+                    
+                    # Set loss fields for MS-SWIFT compatibility
+                    outputs.loss = loss
+                    outputs.llm_loss = loss
                 
                 return outputs
             

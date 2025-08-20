@@ -122,6 +122,30 @@ class HiggsAudioDataCollator:
             Dictionary of batched tensors for model input
         """
         
+        # Log first sample for debugging
+        if features and len(features) > 0:
+            logger.info(f"[COLLATOR DEBUG] Processing batch of {len(features)} samples")
+            first_feature = features[0]
+            logger.info(f"[COLLATOR DEBUG] First feature keys: {list(first_feature.keys())}")
+            
+            # Log input_ids details
+            if 'input_ids' in first_feature:
+                input_ids = first_feature['input_ids']
+                if isinstance(input_ids, torch.Tensor):
+                    logger.info(f"[COLLATOR DEBUG] input_ids shape: {input_ids.shape}, dtype: {input_ids.dtype}")
+                    logger.info(f"[COLLATOR DEBUG] input_ids first 20: {input_ids[:20].tolist() if len(input_ids) > 0 else 'empty'}")
+                elif isinstance(input_ids, list):
+                    logger.info(f"[COLLATOR DEBUG] input_ids length: {len(input_ids)}")
+                    logger.info(f"[COLLATOR DEBUG] input_ids first 20: {input_ids[:20] if len(input_ids) > 0 else 'empty'}")
+            
+            # Log labels details
+            if 'labels' in first_feature:
+                labels = first_feature['labels']
+                if isinstance(labels, torch.Tensor):
+                    logger.info(f"[COLLATOR DEBUG] labels shape: {labels.shape}, dtype: {labels.dtype}")
+                elif isinstance(labels, list):
+                    logger.info(f"[COLLATOR DEBUG] labels length: {len(labels)}")
+        
         # Extract ChatMLDatasetSample objects from preprocessed features
         chatml_samples = []
         for feature in features:
@@ -150,6 +174,15 @@ class HiggsAudioDataCollator:
         try:
             batch_input = self.collator(chatml_samples)
             
+            # Log collator output details
+            logger.info(f"[COLLATOR DEBUG] Batch output from HiggsAudioSampleCollator:")
+            logger.info(f"[COLLATOR DEBUG]   input_ids shape: {batch_input.input_ids.shape if batch_input.input_ids is not None else 'None'}")
+            logger.info(f"[COLLATOR DEBUG]   attention_mask shape: {batch_input.attention_mask.shape if batch_input.attention_mask is not None else 'None'}")
+            logger.info(f"[COLLATOR DEBUG]   label_ids shape: {batch_input.label_ids.shape if batch_input.label_ids is not None else 'None'}")
+            logger.info(f"[COLLATOR DEBUG]   audio_features shape: {batch_input.audio_features.shape if batch_input.audio_features is not None else 'None'}")
+            logger.info(f"[COLLATOR DEBUG]   audio_in_ids shape: {batch_input.audio_in_ids.shape if batch_input.audio_in_ids is not None else 'None'}")
+            logger.info(f"[COLLATOR DEBUG]   audio_out_ids shape: {batch_input.audio_out_ids.shape if batch_input.audio_out_ids is not None else 'None'}")
+            
             # Convert HiggsAudioBatchInput to dictionary format expected by MS-SWIFT
             result = {
                 'input_ids': batch_input.input_ids,
@@ -174,6 +207,8 @@ class HiggsAudioDataCollator:
                 result['audio_in_ids_start'] = batch_input.audio_in_ids_start
             if batch_input.label_audio_ids is not None:
                 result['label_audio_ids'] = batch_input.label_audio_ids
+            
+            logger.info(f"[COLLATOR DEBUG] Result dict keys: {list(result.keys())}")
                 
             return result
             
