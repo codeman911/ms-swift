@@ -196,20 +196,26 @@ def register_higgs_audio_model(
             model.eval()
             
             # Fix gradient checkpointing compatibility
-            # MS-SWIFT calls enable_input_require_grads which relies on get_input_embeddings
-            # The original HiggsAudioModel has this method, but we need to ensure compatibility
-            if not hasattr(model, 'enable_input_require_grads'):
-                def enable_input_require_grads():
-                    def make_inputs_require_grads(module, input, output):
-                        output.requires_grad_(True)
-                    
-                    # Use the existing get_input_embeddings method from HiggsAudioModel
-                    input_embeddings = model.get_input_embeddings()
-                    model._require_grads_hook = input_embeddings.register_forward_hook(make_inputs_require_grads)
+            # Override the transformers base class method that raises NotImplementedError
+            def enable_input_require_grads():
+                def make_inputs_require_grads(module, input, output):
+                    output.requires_grad_(True)
                 
-                # Bind the method to the model instance
-                import types
-                model.enable_input_require_grads = types.MethodType(enable_input_require_grads, model)
+                # Use the existing get_input_embeddings method from HiggsAudioModel
+                input_embeddings = model.get_input_embeddings()
+                model._require_grads_hook = input_embeddings.register_forward_hook(make_inputs_require_grads)
+            
+            # Bind the method to the model instance to override the base class method
+            import types
+            model.enable_input_require_grads = types.MethodType(enable_input_require_grads, model)
+            
+            # Also add disable method for completeness
+            def disable_input_require_grads():
+                if hasattr(model, '_require_grads_hook'):
+                    model._require_grads_hook.remove()
+                    delattr(model, '_require_grads_hook')
+            
+            model.disable_input_require_grads = types.MethodType(disable_input_require_grads, model)
             
             logger.info("Model loaded and set to eval mode")
         
