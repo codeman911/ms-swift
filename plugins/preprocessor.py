@@ -18,17 +18,18 @@ from boson_multimodal.dataset.chatml_dataset import prepare_chatml_sample, ChatM
 from boson_multimodal.data_types import ChatMLSample, Message, AudioContent, TextContent
 from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
 
-from swift.llm.dataset.preprocessor import PreprocessFunc
+from swift.llm.dataset.preprocessor import RowPreprocessor
 from swift.utils import get_logger
 
 logger = get_logger()
 
 
-class HiggsAudioPreprocessor(PreprocessFunc):
+class HiggsAudioPreprocessor(RowPreprocessor):
     """Custom preprocessor for Higgs-Audio that uses original boson_multimodal logic."""
     
-    def __init__(self, columns: Optional[List[str]] = None):
-        self.columns = columns or ['messages']
+    def __init__(self, columns: Optional[List[str]] = None, **kwargs):
+        super().__init__(columns={'messages': 'messages'}, **kwargs)
+        self._columns = columns or ['messages']
         
     def __call__(self, dataset, tokenizer, **kwargs):
         """Preprocess dataset using original Higgs-Audio logic."""
