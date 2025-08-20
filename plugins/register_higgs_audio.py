@@ -123,42 +123,38 @@ def verify_registration():
     Returns:
         bool: True if all components are registered correctly
     """
-    
-    from swift.llm.model.register import MODEL_MAPPING
-    from swift.llm.dataset.register import DATASET_MAPPING
-    from swift.llm.template.register import TEMPLATE_MAPPING
-    
-    verification_passed = True
-    
     logger.info("\n🔍 Verifying component registration...")
     
+    # Force import of our custom modules to trigger registration
+    import swift.llm.model.model.higgs_audio
+    import swift.llm.template.template.higgs_audio
+    import swift.llm.dataset.dataset.higgs_audio
+    
+    from swift.llm import MODEL_MAPPING, TEMPLATE_MAPPING
+    from swift.llm.dataset import DATASET_MAPPING
+    
     # Check model registration
-    if 'higgs-audio-full' in MODEL_MAPPING:
+    model_registered = 'higgs-audio-full' in MODEL_MAPPING
+    if model_registered:
         logger.info("✅ Model 'higgs-audio-full' is registered")
     else:
         logger.error("❌ Model 'higgs-audio-full' is NOT registered")
-        verification_passed = False
     
     # Check template registration
-    if 'higgs-chatml' in TEMPLATE_MAPPING:
+    template_registered = 'higgs-chatml' in TEMPLATE_MAPPING
+    if template_registered:
         logger.info("✅ Template 'higgs-chatml' is registered")
     else:
         logger.error("❌ Template 'higgs-chatml' is NOT registered")
-        verification_passed = False
     
     # Check dataset registration
-    if 'higgs-audio-voice-cloning' in DATASET_MAPPING:
+    dataset_registered = any('higgs-audio-voice-cloning' in str(k) for k in DATASET_MAPPING.keys())
+    if dataset_registered:
         logger.info("✅ Dataset 'higgs-audio-voice-cloning' is registered")
     else:
         logger.error("❌ Dataset 'higgs-audio-voice-cloning' is NOT registered")
-        verification_passed = False
     
-    if verification_passed:
-        logger.info("\n✅ All components verified successfully!")
-    else:
-        logger.error("\n❌ Some components failed verification")
-    
-    return verification_passed
+    return model_registered and template_registered and dataset_registered
 
 
 def main():

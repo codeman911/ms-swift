@@ -131,8 +131,8 @@ def register_higgs_audio_loss_plugin():
     This function registers the custom loss function for use in training.
     """
     try:
-        # Import the loss mapping from swift.plugin
-        from swift.plugin import loss_mapping
+        # Import the loss mapping from swift.plugin.loss
+        from swift.plugin.loss import loss_mapping
         
         # Register our custom loss function
         loss_mapping['higgs_text_audio'] = higgs_audio_loss_func
