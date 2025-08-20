@@ -139,7 +139,43 @@ def register_higgs_audio_model(
             
         # Load audio tokenizer separately for later use
         try:
-            audio_tokenizer = load_higgs_audio_tokenizer(model_dir)
+            # Custom loading function that filters out unexpected parameters
+            def load_audio_tokenizer_safe(tokenizer_name_or_path, device="cuda"):
+                import json
+                import os
+                from huggingface_hub import snapshot_download
+                
+                is_local = os.path.exists(tokenizer_name_or_path)
+                if not is_local:
+                    tokenizer_path = snapshot_download(tokenizer_name_or_path)
+                else:
+                    tokenizer_path = tokenizer_name_or_path
+                    
+                config_path = os.path.join(tokenizer_path, "config.json")
+                model_path = os.path.join(tokenizer_path, "model.pth")
+                config = json.load(open(config_path))
+                
+                # Filter out parameters that HiggsAudioTokenizer doesn't accept
+                valid_params = {
+                    'n_filters', 'D', 'target_bandwidths', 'ratios', 'sample_rate',
+                    'bins', 'n_q', 'codebook_dim', 'normalize', 'causal',
+                    'semantic_techer', 'last_layer_semantic', 'merge_mode',
+                    'downsample_mode', 'semantic_mode', 'vq_scale', 'semantic_sample_rate'
+                }
+                
+                filtered_config = {k: v for k, v in config.items() if k in valid_params}
+                
+                model = HiggsAudioTokenizer(
+                    **filtered_config,
+                    device=device,
+                )
+                parameter_dict = torch.load(model_path, map_location=device)
+                model.load_state_dict(parameter_dict, strict=False)
+                model.to(device)
+                model.eval()
+                return model
+            
+            audio_tokenizer = load_audio_tokenizer_safe(model_dir)
             # Store audio tokenizer as an attribute
             tokenizer.audio_tokenizer = audio_tokenizer
             logger.info(f"Loaded Higgs-Audio audio tokenizer from {model_dir}")
@@ -168,10 +204,12 @@ def register_higgs_audio_model(
         
         model = None
         if load_model:
-            # Prepare model kwargs
-            if model_kwargs is None:
+            # Prepare model kwargs - ensure it's a dictionary
+            if model_kwargs is None or not isinstance(model_kwargs, dict):
                 model_kwargs = {}
             
+            # Create a copy to avoid modifying the original
+            model_kwargs = model_kwargs.copy()
             model_kwargs.update({
                 "torch_dtype": torch_dtype,
                 "trust_remote_code": True,
