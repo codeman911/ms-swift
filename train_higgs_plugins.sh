@@ -19,7 +19,7 @@ export USE_MODELSCOPE_HUB=0
 
 # Parse command line arguments
 MODEL_PATH="../train-higgs-audio/model_file/"  # Default model path
-DATASET_PATH="lora_training_data_zr/chatml_fixed/val_chatml_samples.json"  # Default dataset
+DATASET_PATH="../lora_training_data_zr/chatml_fixed/val_chatml_samples.json"  # Default dataset
 OUTPUT_DIR="./output_higgs_final"  # Default output
 
 # Parse arguments

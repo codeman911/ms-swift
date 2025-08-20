@@ -150,6 +150,10 @@ def get_model_tokenizer(
             
             try:
                 # Load model with HiggsAudioForCausalLM
+                # Remove torch_dtype from model_kwargs to avoid duplicate parameter
+                if 'torch_dtype' in model_kwargs:
+                    del model_kwargs['torch_dtype']
+                
                 model = HiggsAudioModel.from_pretrained(
                     model_dir,
                     torch_dtype=torch_dtype or torch.bfloat16,
