@@ -78,24 +78,42 @@ def load_higgs_audio_dataset(
         for line in f:
             if line.strip():
                 sample = json.loads(line.strip())
-                # Ensure proper ChatML format with multimodal content
+                # Use original Higgs-Audio preprocessing to handle multimodal content properly
                 if 'messages' in sample:
-                    # Process each message to ensure proper content structure
+                    # Convert multimodal content to proper string format for MS-SWIFT
                     processed_messages = []
                     for message in sample['messages']:
                         content = message.get('content', '')
                         
-                        # Handle both string and list content
-                        if isinstance(content, str):
-                            processed_content = [{'type': 'text', 'text': content}]
-                        elif isinstance(content, list):
-                            processed_content = content
-                        else:
-                            processed_content = [{'type': 'text', 'text': str(content)}]
+                        # Handle multimodal content - convert to text representation
+                        if isinstance(content, list):
+                            text_parts = []
+                            for item in content:
+                                if isinstance(item, dict):
+                                    if item.get('type') == 'text':
+                                        text_parts.append(item.get('text', ''))
+                                    elif item.get('type') == 'audio':
+                                        # Add audio placeholder with path info
+                                        audio_url = item.get('audio_url', '')
+                                        if audio_url:
+                                            text_parts.append(f'<|AUDIO:{audio_url}|>')
+                                        else:
+                                            text_parts.append('<|AUDIO|>')
+                                else:
+                                    # Handle string items in list
+                                    text_parts.append(str(item))
+                            content = ' '.join(text_parts)
+                        elif isinstance(content, dict):
+                            # Single content item
+                            if content.get('type') == 'text':
+                                content = content.get('text', '')
+                            elif content.get('type') == 'audio':
+                                audio_url = content.get('audio_url', '')
+                                content = f'<|AUDIO:{audio_url}|>' if audio_url else '<|AUDIO|>'
                         
                         processed_messages.append({
-                            'role': message['role'],
-                            'content': processed_content
+                            'role': message.get('role', 'user'),
+                            'content': str(content)  # Ensure it's a string
                         })
                     
                     sample['messages'] = processed_messages
