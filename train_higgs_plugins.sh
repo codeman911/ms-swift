@@ -17,10 +17,33 @@ export PYTHONPATH="${PWD}:${PWD}/higgs-audio:${PYTHONPATH}"
 export USE_HF=1
 export USE_MODELSCOPE_HUB=0
 
-# Training configuration
-DATASET_PATH="${1:-temp_chatml_samples.jsonl}"  # Accept dataset path as argument
-OUTPUT_DIR="${2:-./output_higgs_final}"  # Accept output dir as argument
-MODEL_PATH="${3:-/Users/vikram.solanki/Projects/tts/ms-swift/higgs-audio}"  # Local model path
+# Parse command line arguments
+MODEL_PATH="/Users/vikram.solanki/Projects/tts/ms-swift/higgs-audio"  # Default model path
+DATASET_PATH="temp_chatml_samples.jsonl"  # Default dataset
+OUTPUT_DIR="./output_higgs_final"  # Default output
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --model)
+            MODEL_PATH="$2"
+            shift 2
+            ;;
+        --dataset_path)
+            DATASET_PATH="$2"
+            shift 2
+            ;;
+        --output_dir)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--model MODEL_PATH] [--dataset_path DATASET_PATH] [--output_dir OUTPUT_DIR]"
+            exit 1
+            ;;
+    esac
+done
 
 echo "📦 Configuration:"
 echo "  - Model: Higgs-Audio V2 (from $MODEL_PATH)"

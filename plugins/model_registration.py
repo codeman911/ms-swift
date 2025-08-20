@@ -305,6 +305,10 @@ def get_higgs_model_tokenizer(
             logger.info("Model loaded and set to eval mode")
         
         return model, tokenizer
+
+
+def register_higgs_audio_models():
+    """Register Higgs-Audio models with MS-SWIFT"""
     
     # Register the model with MS-SWIFT
     register_model(
@@ -331,3 +335,5 @@ def get_higgs_model_tokenizer(
         ),
         exist_ok=True,
     )
+    
+    logger.info("✅ Higgs-Audio model registered successfully")
