@@ -15,8 +15,7 @@ from swift.llm import (
     register_model, ModelMeta, Model
 )
 from swift.utils import get_logger
-from swift.llm.utils.model import ModelArch, LoRATM, ModelKeys
-from swift.llm.constant import LLMModelType
+from swift.llm.constant import LLMModelType, MLLMTemplateType
 
 logger = get_logger()
 
@@ -56,20 +55,9 @@ MODEL_TYPE = 'higgs-audio'
 MODEL_ID = 'bosonai/higgs-audio-v2-generation-3B-base'
 REVISION = None
 
-# Add ModelKeys for Higgs-Audio with language_model attribute
-if not hasattr(ModelKeys, 'higgs_audio'):
-    # Create a custom ModelKeys class with language_model attribute
-    class HiggsAudioModelKeys:
-        def __init__(self):
-            self.language_model = ['layers.*.self_attn.q_proj', 'layers.*.self_attn.k_proj', 
-                                 'layers.*.self_attn.v_proj', 'layers.*.self_attn.o_proj',
-                                 'layers.*.mlp.gate_proj', 'layers.*.mlp.up_proj', 'layers.*.mlp.down_proj']
-    
-    ModelKeys.higgs_audio = HiggsAudioModelKeys()
-
 # Register model type constant
-if not hasattr(ModelType, 'higgs_audio'):
-    ModelType.higgs_audio = MODEL_TYPE
+if not hasattr(LLMModelType, 'higgs_audio'):
+    LLMModelType.higgs_audio = MODEL_TYPE
 
 def get_model_tokenizer(
         model_dir: str,
@@ -218,11 +206,9 @@ def register_higgs_audio_models():
                 Model('bosonai/higgs-audio-v2-generation-3B-base', 'bosonai/higgs-audio-v2-generation-3B-base'),
                 Model('higgs-audio-local', '../train-higgs-audio/model_file/'),
             ],
-            LoRATM.higgs_audio,
-            MLLMTemplateType.higgs_audio_chatml,
-            get_higgs_model_tokenizer,
+            template=MLLMTemplateType.higgs_audio_chatml,
+            get_tokenizer_func=get_higgs_model_tokenizer,
             architectures=['HiggsAudioForCausalLM'],
-            model_arch=ModelKeys.higgs_audio,
             requires=['boson_multimodal'],
             tags=['multi-modal', 'audio'],
         ),
