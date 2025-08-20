@@ -158,6 +158,10 @@ def get_model_tokenizer(
                 if 'device_map' not in model_kwargs and torch.cuda.is_available():
                     model_kwargs['device_map'] = 'auto'
                 
+                # Disable SDPA to avoid the 'sdpa' error
+                model_kwargs['use_flash_attention_2'] = False
+                model_kwargs['attn_implementation'] = 'eager'
+                
                 model = HiggsAudioModel.from_pretrained(
                     model_dir,
                     torch_dtype=torch_dtype or torch.bfloat16,

@@ -19,7 +19,10 @@ export USE_MODELSCOPE_HUB=0
 
 # Parse command line arguments
 MODEL_PATH="../train-higgs-audio/model_file/"  # Default model path
-DATASET_PATH="../lora_training_data_zr/chatml_fixed/val_chatml_samples.json"  # Default dataset
+
+# Use absolute path for dataset to avoid path resolution issues
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATASET_PATH="${SCRIPT_DIR}/lora_training_data_zr/chatml_fixed/val_chatml_samples.json"  # Default dataset with absolute path
 OUTPUT_DIR="./output_higgs_final"  # Default output
 
 # Parse arguments
