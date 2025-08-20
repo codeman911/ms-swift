@@ -4,7 +4,8 @@ Implements custom loss computation that sums text and audio losses
 as specified in the documentation.
 """
 
-from swift.llm.plugin import register_plugin, PeftTrainerPlugin
+from swift.plugin import register_plugin
+from swift.plugin.tuner import PeftTrainerPlugin
 from swift.utils import get_logger
 
 logger = get_logger()
