@@ -15,18 +15,20 @@ if higgs_audio_path.exists():
 
 from swift.utils import get_logger
 # Allow import both as top-level module (via --custom_register_path) and as package module
-try:
-    # When imported as a standalone module (module name: 'register')
-    from model_registration import register_higgs_audio_models
-    from dataset_registration import register_higgs_audio_datasets
-    from trainer import HiggsAudioTrainer
-    from collator import HiggsAudioCollator
-except ImportError:
-    # When imported as part of the 'plugins' package (module name: 'plugins.register')
-    from .model_registration import register_higgs_audio_models
-    from .dataset_registration import register_higgs_audio_datasets
-    from .trainer import HiggsAudioTrainer
-    from .collator import HiggsAudioCollator
+# Import modules directly since we're in the plugins directory
+import sys
+import os
+from pathlib import Path
+
+# Add current directory to path for imports
+current_dir = Path(__file__).parent
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+
+from model_registration import register_higgs_audio_models
+from dataset_registration import register_higgs_audio_datasets
+from trainer import HiggsAudioTrainer
+from collator import HiggsAudioCollator
 
 logger = get_logger()
 
@@ -57,7 +59,7 @@ def register_higgs_audio_all():
     # Register the custom template for the collator
     logger.info("📋 Registering HiggsAudioTemplate...")
     from swift.llm import TEMPLATE_MAPPING
-    from .template import HiggsAudioTemplate
+    from template import HiggsAudioTemplate
     TEMPLATE_MAPPING['higgs-audio-template'] = HiggsAudioTemplate
     
     logger.info("=" * 60)

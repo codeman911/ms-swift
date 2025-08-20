@@ -11,7 +11,7 @@ from pathlib import Path
 from datasets import Dataset, load_dataset, Audio
 from swift.llm import register_dataset, DatasetMeta
 from swift.llm.dataset.preprocessor import AutoPreprocessor
-from .preprocessor import HiggsAudioPreprocessor
+from preprocessor import HiggsAudioPreprocessor
 from swift.utils import get_logger
 
 logger = get_logger()
