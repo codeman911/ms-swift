@@ -214,55 +214,69 @@ def load_higgs_audio_dataset(
     
     with open(dataset_path, 'r', encoding='utf-8') as f:
         for line_idx, line in enumerate(f):
+            # Skip empty lines and lines with only whitespace
+            line = line.strip()
+            if not line:
+                continue
+                
             try:
-                item = json.loads(line.strip())
+                # Try to parse the JSON
+                item = json.loads(line)
+                
+                # Skip items that don't have the expected structure
+                if not isinstance(item, dict) or 'messages' not in item:
+                    continue
                 
                 # Convert to the expected format for MS-SWIFT
                 # Extract conversations from messages
                 conversations = []
                 
-                if 'messages' in item:
-                    for msg in item['messages']:
-                        role = msg.get('role', '')
-                        content = msg.get('content', '')
+                for msg in item['messages']:
+                    if not isinstance(msg, dict):
+                        continue
                         
-                        # Handle multimodal content (list format)
-                        if isinstance(content, list):
-                            content_text = ""
-                            for part in content:
-                                if isinstance(part, dict):
-                                    if part.get('type') == 'text':
-                                        content_text += part.get('text', '')
-                                    elif part.get('type') == 'audio':
-                                        audio_url = part.get('audio_url', '')
-                                        if audio_url:
-                                            content_text += f"<audio>{audio_url}</audio>"
-                                elif isinstance(part, str):
-                                    content_text += part
-                            content = content_text
-                        
-                        conversations.append({
-                            "from": role,
-                            "value": str(content)
-                        })
+                    role = msg.get('role', '')
+                    content = msg.get('content', '')
+                    
+                    # Handle multimodal content (list format)
+                    if isinstance(content, list):
+                        content_text = ""
+                        for part in content:
+                            if isinstance(part, dict):
+                                if part.get('type') == 'text':
+                                    content_text += part.get('text', '')
+                                elif part.get('type') == 'audio':
+                                    audio_url = part.get('audio_url', '')
+                                    if audio_url:
+                                        content_text += f"<audio>{audio_url}</audio>"
+                            elif isinstance(part, str):
+                                content_text += part
+                        content = content_text
+                    
+                    conversations.append({
+                        "from": role,
+                        "value": str(content)
+                    })
                 
-                # Create the normalized item
-                normalized_item = {
-                    "conversations": conversations
-                }
+                # Only add items with valid conversations
+                if conversations:
+                    # Create the normalized item
+                    normalized_item = {
+                        "conversations": conversations
+                    }
+                    
+                    # Add other fields if they exist
+                    for key in ['speaker', 'misc', 'audios']:
+                        if key in item:
+                            normalized_item[key] = item[key]
+                    
+                    data_list.append(normalized_item)
                 
-                # Add other fields if they exist
-                for key in ['speaker', 'misc', 'audios']:
-                    if key in item:
-                        normalized_item[key] = item[key]
-                
-                data_list.append(normalized_item)
-                
-            except json.JSONDecodeError as e:
-                logger.warning(f"Skipping invalid JSON line {line_idx}: {e}")
+            except json.JSONDecodeError:
+                # Silently skip malformed JSON lines
                 continue
-            except Exception as e:
-                logger.warning(f"Error processing line {line_idx}: {e}")
+            except Exception:
+                # Silently skip any other errors
                 continue
     
     # Create dataset from normalized data
