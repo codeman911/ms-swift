@@ -26,7 +26,7 @@ echo "🤖 Model: bosonai/higgs-audio-v2-generation-3B-base"
 # Register plugins and start training
 swift sft \
     --model_type higgs-audio-v2-generation-3b-base \
-    --model_id_or_path bosonai/higgs-audio-v2-generation-3B-base \
+    --model bosonai/higgs-audio-v2-generation-3B-base \
     --template higgs-audio-template \
     --custom_register_path plugins/register.py \
     --dataset higgs-audio-tts \

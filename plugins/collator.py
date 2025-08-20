@@ -116,11 +116,73 @@ class HiggsAudioDataCollator:
         """Process batch of samples using original collator.
         
         Args:
-            features: List of sample dictionaries from MS-SWIFT
+            features: List of sample dictionaries from MS-SWIFT with ChatMLDatasetSample
             
         Returns:
-            Dictionary of batched tensors compatible with Higgs-Audio model
+            Dictionary of batched tensors for model input
         """
+        
+        # Extract ChatMLDatasetSample objects from preprocessed features
+        chatml_samples = []
+        for feature in features:
+            if 'chatml_sample' in feature:
+                # Use the preprocessed ChatMLDatasetSample
+                chatml_samples.append(feature['chatml_sample'])
+            else:
+                # Fallback: create from basic features
+                input_ids = feature.get('input_ids', torch.tensor([]))
+                labels = feature.get('labels', feature.get('label_ids', None))
+                
+                sample = ChatMLDatasetSample(
+                    input_ids=input_ids,
+                    label_ids=labels,
+                    audio_ids_concat=torch.tensor([[]]),
+                    audio_ids_start=torch.tensor([]),
+                    audio_waveforms_concat=torch.tensor([]),
+                    audio_waveforms_start=torch.tensor([]),
+                    audio_sample_rate=torch.tensor([]),
+                    audio_speaker_indices=torch.tensor([]),
+                    audio_label_ids_concat=None
+                )
+                chatml_samples.append(sample)
+        
+        # Use original collator
+        try:
+            batch_input = self.collator(chatml_samples)
+            
+            # Convert HiggsAudioBatchInput to dictionary format expected by MS-SWIFT
+            result = {
+                'input_ids': batch_input.input_ids,
+                'attention_mask': batch_input.attention_mask,
+                'labels': batch_input.label_ids,
+            }
+            
+            # Add audio-specific fields if they exist
+            if batch_input.audio_features is not None:
+                result['audio_features'] = batch_input.audio_features
+            if batch_input.audio_feature_attention_mask is not None:
+                result['audio_feature_attention_mask'] = batch_input.audio_feature_attention_mask
+            if batch_input.audio_out_ids is not None:
+                result['audio_out_ids'] = batch_input.audio_out_ids
+            if batch_input.audio_out_ids_start is not None:
+                result['audio_out_ids_start'] = batch_input.audio_out_ids_start
+            if batch_input.audio_out_ids_start_group_loc is not None:
+                result['audio_out_ids_start_group_loc'] = batch_input.audio_out_ids_start_group_loc
+            if batch_input.audio_in_ids is not None:
+                result['audio_in_ids'] = batch_input.audio_in_ids
+            if batch_input.audio_in_ids_start is not None:
+                result['audio_in_ids_start'] = batch_input.audio_in_ids_start
+            if batch_input.label_audio_ids is not None:
+                result['label_audio_ids'] = batch_input.label_audio_ids
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in collator: {e}")
+            # Fallback to basic collation
+            return self._fallback_collate(features)
+    
+    def _fallback_collate(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         # Convert MS-SWIFT dataset format to ChatMLDatasetSample format
         samples = []
         for feature in features:

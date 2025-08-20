@@ -10,6 +10,8 @@ from typing import Dict, List, Any, Optional, Union
 from pathlib import Path
 from datasets import Dataset, load_dataset, Audio
 from swift.llm import register_dataset, DatasetMeta
+from swift.llm.dataset.preprocessor import AutoPreprocessor
+from .preprocessor import HiggsAudioPreprocessor
 from swift.utils import get_logger
 
 logger = get_logger()
@@ -22,37 +24,24 @@ def register_higgs_audio_datasets():
     register_dataset(
         DatasetMeta(
             dataset_name='higgs-audio-tts',
-            
-            # ChatML columns mapping
-            columns=['messages', 'audios'],
-            
-            # Tags for dataset
             tags=['audio', 'tts', 'voice-cloning', 'multimodal'],
-            
-            # Dataset capabilities
-            task='multimodal-generation',
-            
-            # Split configuration
-            train_split='train',
-            val_split='validation',
-            test_split='test'
+            preprocess_func=HiggsAudioPreprocessor(columns=['messages']),
+            load_function=load_higgs_audio_dataset,
+            split=['train']
         ),
-        get_dataset_fn=load_higgs_audio_dataset,
-        exists_ok=True
+        exist_ok=True
     )
     
     # Register voice cloning dataset
     register_dataset(
         DatasetMeta(
             dataset_name='higgs-voice-cloning',
-            columns=['messages', 'audios', 'reference_audio'],
             tags=['voice-cloning', 'zero-shot', 'tts'],
-            task='voice-cloning',
-            train_split='train',
-            val_split='validation'
+            preprocess_func=HiggsAudioPreprocessor(columns=['messages']),
+            load_function=load_voice_cloning_dataset,
+            split=['train']
         ),
-        get_dataset_fn=load_voice_cloning_dataset,
-        exists_ok=True
+        exist_ok=True
     )
     
     logger.info("✅ Higgs-Audio datasets registered successfully")
@@ -63,44 +52,53 @@ def load_higgs_audio_dataset(
     split: str = 'train',
     **kwargs
 ) -> Dataset:
-    """
-    Load Higgs-Audio dataset with ChatML format
+    """Load Higgs-Audio dataset from JSONL file with proper ChatML format.
     
     Args:
-        dataset_path: Path to dataset (JSONL file or directory)
-        split: Dataset split to load
+        dataset_path: Path to the JSONL dataset file
+        split: Dataset split (train/val/test)
+        **kwargs: Additional arguments
         
     Returns:
-        HuggingFace Dataset with messages and audios columns
+        Dataset: Loaded dataset with proper multimodal ChatML format
     """
     
     logger.info(f"Loading Higgs-Audio dataset from {dataset_path}, split={split}")
     
-    # Handle different input formats
-    path = Path(dataset_path)
-    
-    if path.is_file() and path.suffix == '.jsonl':
-        # Load from JSONL file
-        data = load_jsonl_dataset(dataset_path)
-    elif path.is_dir():
-        # Load from directory structure
-        data = load_directory_dataset(path, split)
-    else:
-        # Try loading from HuggingFace Hub
-        try:
-            dataset = load_dataset(dataset_path, split=split, **kwargs)
-            return process_hf_dataset(dataset)
-        except Exception as e:
-            logger.error(f"Failed to load dataset: {e}")
-            raise
+    # Load JSONL file
+    data = []
+    with open(dataset_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                sample = json.loads(line.strip())
+                # Ensure proper ChatML format with multimodal content
+                if 'messages' in sample:
+                    # Process each message to ensure proper content structure
+                    processed_messages = []
+                    for message in sample['messages']:
+                        content = message.get('content', '')
+                        
+                        # Handle both string and list content
+                        if isinstance(content, str):
+                            processed_content = [{'type': 'text', 'text': content}]
+                        elif isinstance(content, list):
+                            processed_content = content
+                        else:
+                            processed_content = [{'type': 'text', 'text': str(content)}]
+                        
+                        processed_messages.append({
+                            'role': message['role'],
+                            'content': processed_content
+                        })
+                    
+                    sample['messages'] = processed_messages
+                
+                data.append(sample)
     
     # Convert to HuggingFace Dataset
     dataset = Dataset.from_list(data)
     
-    # Cast audio column to Audio feature
-    if 'audios' in dataset.column_names:
-        dataset = dataset.cast_column('audios', Audio(sampling_rate=24000))
-    
+    logger.info(f"Loaded {len(dataset)} samples from {dataset_path}")
     return dataset
 
 
