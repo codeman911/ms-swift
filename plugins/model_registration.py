@@ -1,39 +1,53 @@
-"""Higgs-Audio model registration for MS-SWIFT following CUSTOM_TTS.md
+"""Higgs-Audio model registration for MS-SWIFT.
 
-Registers Higgs-Audio model components with the MS-SWIFT framework.
+This module handles the registration of Higgs-Audio models with MS-SWIFT's model registry.
 """
 
 import os
 import sys
+from typing import Any, Dict, Optional, Tuple
+
 import torch
-import types
-from typing import Dict, Any, Optional, Tuple
-from pathlib import Path
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
-# Add Higgs-Audio path to sys.path for imports
-higgs_audio_path = Path(__file__).parent.parent / "higgs-audio"
-if str(higgs_audio_path) not in sys.path:
-    sys.path.insert(0, str(higgs_audio_path))
-
-try:
-    from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
-    from boson_multimodal.model.higgs_audio.configuration_higgs_audio import HiggsAudioConfig
-    from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
-    HIGGS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Could not import Higgs-Audio components: {e}")
-    HIGGS_AVAILABLE = False
-    HiggsAudioModel = None
-    HiggsAudioConfig = None
-    load_higgs_audio_tokenizer = None
-
-# Import MS-SWIFT components
-from swift.llm.model.register import register_model, ModelMeta, ModelGroup, Model
+from swift.llm import TemplateType
+from swift.llm.model import Model, ModelGroup, ModelMeta, register_model
 from swift.llm.model.constant import ModelType
 from swift.llm.model.model_arch import ModelArch
 from swift.utils import get_logger
 
 logger = get_logger()
+
+# Add Higgs-Audio path to system path
+higgs_audio_path = os.path.join(os.path.dirname(__file__), '..', 'higgs-audio')
+if os.path.exists(higgs_audio_path):
+    sys.path.insert(0, higgs_audio_path)
+
+# Try to import Higgs-Audio components with compatibility handling
+HIGGS_AUDIO_AVAILABLE = False
+HiggsAudioModel = None
+load_higgs_audio_tokenizer = None
+
+try:
+    # Patch for transformers compatibility
+    import transformers.models.llama.modeling_llama as llama_module
+    if not hasattr(llama_module, 'LLAMA_ATTENTION_CLASSES'):
+        # Create a compatibility shim for older transformers versions
+        llama_module.LLAMA_ATTENTION_CLASSES = {
+            "eager": getattr(llama_module, 'LlamaAttention', None),
+            "flash_attention_2": getattr(llama_module, 'LlamaFlashAttention2', None),
+            "sdpa": getattr(llama_module, 'LlamaSdpaAttention', None),
+        }
+        # Remove None values
+        llama_module.LLAMA_ATTENTION_CLASSES = {k: v for k, v in llama_module.LLAMA_ATTENTION_CLASSES.items() if v is not None}
+    
+    from boson_multimodal.model.higgs_audio.modeling_higgs_audio import HiggsAudioModel
+    from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
+    HIGGS_AUDIO_AVAILABLE = True
+    logger.info("Successfully imported Higgs-Audio components")
+except ImportError as e:
+    logger.warning(f"Could not import Higgs-Audio components: {e}")
+    logger.warning("Using fallback model loading without Higgs-Audio specific components")
 
 # Model configuration
 MODEL_TYPE = 'higgs-audio'
