@@ -27,7 +27,7 @@ if str(current_dir) not in sys.path:
 
 from model_registration import register_higgs_audio_models
 from dataset_registration import register_higgs_audio_datasets
-import trainer_plugin  # Import to register the plugin
+from trainer_plugin import higgs_audio_trainer_plugin  # Import the trainer plugin instance
 import template  # Import to register the template
 
 logger = get_logger()

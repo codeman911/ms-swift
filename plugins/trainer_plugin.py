@@ -4,14 +4,13 @@ Implements custom loss computation that sums text and audio losses
 as specified in the documentation.
 """
 
-from swift.plugin import register_plugin
-from swift.plugin.tuner import PeftTrainerPlugin
 from swift.utils import get_logger
+from transformers import Trainer
 
 logger = get_logger()
 
 
-class HiggsAudioTrainerPlugin(PeftTrainerPlugin):
+class HiggsAudioTrainerPlugin:
     """Training plugin for Higgs-Audio model as per CUSTOM_TTS.md.
     
     This plugin hooks into the training loop and computes the combined
@@ -70,7 +69,8 @@ class HiggsAudioTrainerPlugin(PeftTrainerPlugin):
         return total_loss, loss_dict
 
 
-# Register the plugin with MS-SWIFT
-register_plugin(HiggsAudioTrainerPlugin())
+# Create a singleton instance
+higgs_audio_trainer_plugin = HiggsAudioTrainerPlugin()
 
-logger.info("✅ Higgs-Audio training plugin registered")
+# Log that the plugin is ready to use
+logger.info("✅ Higgs-Audio training plugin initialized")
