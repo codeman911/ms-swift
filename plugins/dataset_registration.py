@@ -121,13 +121,23 @@ def load_higgs_audio_dataset(
     Returns:
         A HuggingFace Dataset object.
     """
+    # Debug dataset_syntax object
+    logger.info(f"Dataset syntax object: {dataset_syntax}")
+    logger.info(f"Dataset syntax type: {type(dataset_syntax)}")
+    logger.info(f"Dataset syntax attributes: {dir(dataset_syntax)}")
+    
     if hasattr(dataset_syntax, 'subsets') and dataset_syntax.subsets:
         dataset_path = dataset_syntax.subsets[0]
+        logger.info(f"Using dataset path from subsets: {dataset_path}")
     else:
         dataset_path = dataset_syntax.dataset
+        logger.info(f"Using dataset path from dataset attribute: {dataset_path}")
 
     # Ensure dataset_path is not empty
     if not dataset_path:
+        logger.error(f"Dataset path is empty! dataset_syntax: {dataset_syntax}")
+        logger.error(f"dataset_syntax.dataset: {getattr(dataset_syntax, 'dataset', 'NOT_FOUND')}")
+        logger.error(f"dataset_syntax.subsets: {getattr(dataset_syntax, 'subsets', 'NOT_FOUND')}")
         raise ValueError("Dataset path is empty. Please provide a valid dataset path.")
         
     logger.info(f"Loading Higgs-Audio dataset from: {dataset_path} (split: {split})")
