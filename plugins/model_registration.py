@@ -196,13 +196,27 @@ def register_higgs_audio_model(
             model.eval()
             
             # Fix gradient checkpointing compatibility
-            # Override the transformers base class method that raises NotImplementedError
+            # The issue is that PEFT wraps the model and the gradient checkpointing
+            # is applied to the wrapped model, but the PEFT wrapper doesn't have
+            # get_input_embeddings implemented. We need to access the base model.
             def enable_input_require_grads(self):
                 def make_inputs_require_grads(module, input, output):
                     output.requires_grad_(True)
                 
-                # Use the existing get_input_embeddings method from HiggsAudioModel
-                input_embeddings = self.get_input_embeddings()
+                # Access the actual HiggsAudioModel through PEFT wrapper
+                # The model will be wrapped by PEFT later, so we need to handle both cases
+                if hasattr(self, 'base_model') and hasattr(self.base_model, 'model'):
+                    # PEFT wrapped model: PeftModel -> LoraModel -> HiggsAudioModel
+                    base_model = self.base_model.model
+                elif hasattr(self, 'model'):
+                    # Direct PEFT model access
+                    base_model = self.model
+                else:
+                    # Direct model access
+                    base_model = self
+                
+                # Get input embeddings from the actual HiggsAudioModel
+                input_embeddings = base_model.embed_tokens
                 self._require_grads_hook = input_embeddings.register_forward_hook(make_inputs_require_grads)
             
             # Bind the method to the model instance to override the base class method
