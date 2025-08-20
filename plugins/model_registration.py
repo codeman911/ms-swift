@@ -194,6 +194,23 @@ def register_higgs_audio_model(
             
             # Follow original Higgs-Audio patterns - no custom modifications
             model.eval()
+            
+            # Fix gradient checkpointing compatibility
+            # MS-SWIFT calls enable_input_require_grads which relies on get_input_embeddings
+            # The original HiggsAudioModel has this method, but we need to ensure compatibility
+            if not hasattr(model, 'enable_input_require_grads'):
+                def enable_input_require_grads():
+                    def make_inputs_require_grads(module, input, output):
+                        output.requires_grad_(True)
+                    
+                    # Use the existing get_input_embeddings method from HiggsAudioModel
+                    input_embeddings = model.get_input_embeddings()
+                    model._require_grads_hook = input_embeddings.register_forward_hook(make_inputs_require_grads)
+                
+                # Bind the method to the model instance
+                import types
+                model.enable_input_require_grads = types.MethodType(enable_input_require_grads, model)
+            
             logger.info("Model loaded and set to eval mode")
         
         return model, tokenizer
@@ -213,7 +230,7 @@ def register_higgs_audio_model(
                 ),
             ],
             get_function=get_model_tokenizer,
-            template="higgs-audio-template",  # Use custom Higgs-Audio template
+            template="chatml",  # Use standard chatml template with preprocessed data
             requires=["transformers>=4.37.0", "librosa", "soundfile"],
             torch_dtype=torch.bfloat16,
             tags=["audio", "tts", "multimodal", "llm", "voice-cloning"],
