@@ -143,7 +143,9 @@ def register_higgs_audio_model(
             def load_audio_tokenizer_safe(tokenizer_name_or_path, device="cuda"):
                 import json
                 import os
+                import torch
                 from huggingface_hub import snapshot_download
+                from higgs_audio.boson_multimodal.audio_processing.higgs_audio_tokenizer import HiggsAudioTokenizer
                 
                 is_local = os.path.exists(tokenizer_name_or_path)
                 if not is_local:
@@ -210,11 +212,18 @@ def register_higgs_audio_model(
             
             # Create a copy to avoid modifying the original
             model_kwargs = model_kwargs.copy()
-            model_kwargs.update({
+            
+            # Filter out parameters that HiggsAudioModel doesn't accept
+            # HiggsAudioModel only accepts config, not use_cache or trust_remote_code
+            filtered_kwargs = {
                 "torch_dtype": torch_dtype,
-                "trust_remote_code": True,
-                "use_cache": True,
-            })
+            }
+            
+            # Only add device_map if it's in the original kwargs
+            if "device_map" in model_kwargs:
+                filtered_kwargs["device_map"] = model_kwargs["device_map"]
+            
+            model_kwargs = filtered_kwargs
             
             # Add device map for multi-GPU
             if torch.cuda.device_count() > 1 and "device_map" not in model_kwargs:
