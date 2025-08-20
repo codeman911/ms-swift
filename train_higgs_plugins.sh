@@ -60,7 +60,7 @@ swift sft \
     --custom_register_path plugins/register.py \
     --dataset higgs_audio:"$DATASET_PATH" \
     --train_type lora \
-    --lora_target_modules "q_proj k_proj v_proj o_proj gate_proj up_proj down_proj" \
+    --lora_target_modules ALL \
     --lora_rank 8 \
     --lora_alpha 16 \
     --lora_dropout 0.05 \
