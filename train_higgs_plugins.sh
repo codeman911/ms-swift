@@ -52,6 +52,14 @@ echo "  - Output: $OUTPUT_DIR"
 echo "  - Template: higgs-audio-chatml"
 echo "  - Plugins: All components from CUSTOM_TTS.md"
 
+# Validate dataset path
+if [ ! -f "$DATASET_PATH" ]; then
+    echo "❌ ERROR: Dataset file not found at $DATASET_PATH"
+    echo "Please provide a valid dataset path using --dataset_path option"
+    echo "Example: ./train_higgs_plugins.sh --dataset_path /path/to/your/dataset.json"
+    exit 1
+fi
+
 # Main training command following CUSTOM_TTS.md specifications
 swift sft \
     --model_type higgs-audio \
