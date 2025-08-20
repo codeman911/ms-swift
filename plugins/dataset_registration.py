@@ -104,6 +104,48 @@ def register_higgs_audio_datasets():
     logger.info("✅ Higgs-Audio datasets registered successfully")
 
 
+def normalize_dataset_item(item):
+    """Normalize dataset item to ensure PyArrow compatibility"""
+    normalized = {}
+    
+    for key, value in item.items():
+        if key == 'messages':
+            # Ensure messages is always a list of dicts with consistent structure
+            if isinstance(value, list):
+                normalized_messages = []
+                for msg in value:
+                    if isinstance(msg, dict):
+                        # Ensure content is always a string (not mixed list/string)
+                        content = msg.get('content', '')
+                        if isinstance(content, list):
+                            # Convert list content to string representation
+                            content_parts = []
+                            for part in content:
+                                if isinstance(part, dict):
+                                    if part.get('type') == 'text':
+                                        content_parts.append(part.get('text', ''))
+                                    elif part.get('type') == 'audio':
+                                        audio_url = part.get('audio_url', '')
+                                        if audio_url:
+                                            content_parts.append(f'<audio>{audio_url}</audio>')
+                                elif isinstance(part, str):
+                                    content_parts.append(part)
+                            content = ' '.join(content_parts)
+                        
+                        normalized_messages.append({
+                            'role': msg.get('role', ''),
+                            'content': str(content)
+                        })
+                normalized[key] = normalized_messages
+            else:
+                normalized[key] = []
+        else:
+            # Keep other fields as-is but ensure they're JSON serializable
+            normalized[key] = value
+    
+    return normalized
+
+
 def load_higgs_audio_dataset(
     dataset_syntax,
     dataset_meta,
@@ -163,8 +205,68 @@ def load_higgs_audio_dataset(
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset not found at: {dataset_path}")
         
-    # Use the standard HuggingFace dataset loader for JSONL files
-    dataset = load_dataset('json', data_files={split: dataset_path}, split=split)
+    # Load JSON data using the proper ChatML format from Higgs Audio
+    import json
+    import pandas as pd
+    from datasets import Dataset
+    
+    data_list = []
+    
+    with open(dataset_path, 'r', encoding='utf-8') as f:
+        for line_idx, line in enumerate(f):
+            try:
+                item = json.loads(line.strip())
+                
+                # Convert to the expected format for MS-SWIFT
+                # Extract conversations from messages
+                conversations = []
+                
+                if 'messages' in item:
+                    for msg in item['messages']:
+                        role = msg.get('role', '')
+                        content = msg.get('content', '')
+                        
+                        # Handle multimodal content (list format)
+                        if isinstance(content, list):
+                            content_text = ""
+                            for part in content:
+                                if isinstance(part, dict):
+                                    if part.get('type') == 'text':
+                                        content_text += part.get('text', '')
+                                    elif part.get('type') == 'audio':
+                                        audio_url = part.get('audio_url', '')
+                                        if audio_url:
+                                            content_text += f"<audio>{audio_url}</audio>"
+                                elif isinstance(part, str):
+                                    content_text += part
+                            content = content_text
+                        
+                        conversations.append({
+                            "from": role,
+                            "value": str(content)
+                        })
+                
+                # Create the normalized item
+                normalized_item = {
+                    "conversations": conversations
+                }
+                
+                # Add other fields if they exist
+                for key in ['speaker', 'misc', 'audios']:
+                    if key in item:
+                        normalized_item[key] = item[key]
+                
+                data_list.append(normalized_item)
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Skipping invalid JSON line {line_idx}: {e}")
+                continue
+            except Exception as e:
+                logger.warning(f"Error processing line {line_idx}: {e}")
+                continue
+    
+    # Create dataset from normalized data
+    dataset = Dataset.from_list(data_list)
 
     logger.info(f"Successfully loaded {len(dataset)} samples for split '{split}'.")
     return dataset
