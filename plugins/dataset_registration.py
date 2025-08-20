@@ -128,6 +128,29 @@ def load_higgs_audio_dataset(
 
     logger.info(f"Loading Higgs-Audio dataset from: {dataset_path} (split: {split})")
 
+    # Convert to absolute path if it's a relative path
+    if not os.path.isabs(dataset_path):
+        # Check if the path exists relative to the current directory
+        if os.path.exists(dataset_path):
+            dataset_path = os.path.abspath(dataset_path)
+        else:
+            # Try to find the dataset in common locations
+            potential_paths = [
+                os.path.join(os.getcwd(), dataset_path),
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), dataset_path),
+                os.path.join('/vs', dataset_path)
+            ]
+            
+            for path in potential_paths:
+                if os.path.exists(path):
+                    dataset_path = path
+                    logger.info(f"Found dataset at: {dataset_path}")
+                    break
+    
+    # Check if the dataset exists
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(f"Dataset not found at: {dataset_path}")
+        
     # Use the standard HuggingFace dataset loader for JSONL files
     dataset = load_dataset('json', data_files={split: dataset_path}, split=split)
 

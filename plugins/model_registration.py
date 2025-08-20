@@ -150,15 +150,18 @@ def get_model_tokenizer(
             
             try:
                 # Load model with HiggsAudioForCausalLM
-                # Remove torch_dtype from model_kwargs to avoid duplicate parameter
+                # Remove duplicate parameters to avoid conflicts
                 if 'torch_dtype' in model_kwargs:
                     del model_kwargs['torch_dtype']
+                
+                # Don't explicitly set device_map if it's already in model_kwargs
+                if 'device_map' not in model_kwargs and torch.cuda.is_available():
+                    model_kwargs['device_map'] = 'auto'
                 
                 model = HiggsAudioModel.from_pretrained(
                     model_dir,
                     torch_dtype=torch_dtype or torch.bfloat16,
                     trust_remote_code=True,
-                    device_map='auto' if torch.cuda.is_available() else None,
                     **(model_kwargs or {})
                 )
                 
