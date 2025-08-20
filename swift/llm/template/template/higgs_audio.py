@@ -18,10 +18,7 @@ higgs_chatml_template = TemplateMeta(
     stop_words=['<|im_end|>', '<|im_start|>'],
 )
 
-# Register the template
-register_template(
-    template_type='higgs-chatml',
-    template_meta=higgs_chatml_template,
-)
+# Register the template - only pass template_meta
+register_template(higgs_chatml_template)
 
 logger.info("Registered Higgs-Audio template: higgs-chatml")
