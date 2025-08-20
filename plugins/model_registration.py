@@ -55,6 +55,17 @@ MODEL_TYPE = 'higgs-audio'
 MODEL_ID = 'bosonai/higgs-audio-v2-generation-3B-base'
 REVISION = None
 
+# Add ModelKeys for Higgs-Audio with language_model attribute
+if not hasattr(ModelKeys, 'higgs_audio'):
+    # Create a custom ModelKeys class with language_model attribute
+    class HiggsAudioModelKeys:
+        def __init__(self):
+            self.language_model = ['layers.*.self_attn.q_proj', 'layers.*.self_attn.k_proj', 
+                                 'layers.*.self_attn.v_proj', 'layers.*.self_attn.o_proj',
+                                 'layers.*.mlp.gate_proj', 'layers.*.mlp.up_proj', 'layers.*.mlp.down_proj']
+    
+    ModelKeys.higgs_audio = HiggsAudioModelKeys()
+
 # Register model type constant
 if not hasattr(ModelType, 'higgs_audio'):
     ModelType.higgs_audio = MODEL_TYPE
@@ -201,26 +212,18 @@ def register_higgs_audio_models():
     # Register the model with MS-SWIFT
     register_model(
         ModelMeta(
-            model_type=MODEL_TYPE,
-            model_groups=[
-                ModelGroup(
-                    models=[
-                        Model(
-                            hf_model_id=MODEL_ID,
-                            hf_revision=REVISION,
-                        ),
-                    ],
-                ),
+            LLMModelType.higgs_audio,
+            [
+                Model('bosonai/higgs-audio-v2-generation-3B-base', 'bosonai/higgs-audio-v2-generation-3B-base'),
+                Model('higgs-audio-local', '../train-higgs-audio/model_file/'),
             ],
-            get_function=get_model_tokenizer,
-            template="higgs-chatml",  # Custom template for Higgs-Audio
-            requires=["transformers>=4.37.0", "librosa", "soundfile", "whisper"],
-            torch_dtype=torch.bfloat16,
-            tags=["audio", "tts", "multimodal", "llm", "voice-cloning"],
-            additional_saved_files=["audio_tokenizer.json", "audio_config.json"],
-            architectures=["HiggsAudioModel", "HiggsAudioForCausalLM"],
-            is_multimodal=True,
-            model_arch=ModelArch.llama,  # Base architecture is LLaMA
+            LoRATM.higgs_audio,
+            MLLMTemplateType.higgs_audio_chatml,
+            get_higgs_model_tokenizer,
+            architectures=['HiggsAudioForCausalLM'],
+            model_arch=ModelKeys.higgs_audio,
+            requires=['boson_multimodal'],
+            tags=['multi-modal', 'audio'],
         ),
         exist_ok=True,
     )
